@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic"
+
 import { createClient } from "@/lib/supabase/server"
 import { prisma } from "@/lib/prisma"
 import { ResumeLabClient } from "@/components/resume/resume-lab-client"
@@ -5,7 +7,6 @@ import { redirect } from "next/navigation"
 import { getTailoringProgress } from "@/lib/actions/tailoring-engine"
 import type { Resume, TailoringProgress } from "@/lib/types"
 
-export const dynamic = "force-dynamic"
 
 export const metadata = {
   title: "Resume Lab | Lucerna AI",

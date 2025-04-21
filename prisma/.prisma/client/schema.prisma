@@ -1,0 +1,449 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["rhel-openssl-3.0.x", "linux-musl-openssl-3.0.x", "native"]
+  output        = ".prisma/client" // Optional but recommended for v6
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id        String  @id @default(uuid())
+  email     String  @unique
+  fullName  String? @map("full_name")
+  isPremium Boolean @default(false) @map("is_premium")
+
+  dailyResetDate                  DateTime? @map("daily_reset_date")
+  dailyBasicTailoringsUsed        Int       @default(0) @map("daily_basic_tailorings_used")
+  dailyPersonalizedTailoringsUsed Int       @default(0) @map("daily_personalized_tailorings_used")
+  dailyAggressiveTailoringsUsed   Int       @default(0) @map("daily_aggressive_tailorings_used")
+  dailyCoverLettersUsed           Int       @default(0) @map("daily_cover_letters_used")
+  dailyLinkedinOptimizationsUsed  Int       @default(0) @map("daily_linkedin_optimizations_used")
+  dailyInterviewSessionsUsed      Int       @default(0) @map("daily_interview_sessions_used")
+
+  // Analytics preferences
+  analyticsTimeRange String? @map("analytics_time_range")
+  analyticsViewMode  String? @map("analytics_view_mode")
+
+  // Template preferences
+  resumeTemplate String? @map("resume_template")
+
+  //ADD THIS LINE :
+  preferredTailoringMode String? @map("preferred_tailoring_mode")
+
+  // Relations
+  resumes               Resume[]
+  analytics             TailoringAnalytics[]
+  interactions          ResumeInteraction[]
+  coverLetters          CoverLetter[]
+  linkedInOptimizations LinkedInOptimization[]
+  interviewSessions     InterviewSession[]
+  resumeExports         ResumeExport[]
+  jdIntelligence        JobDescriptionIntelligence[]
+
+  createdAt              DateTime                 @default(now()) @map("created_at")
+  updatedAt              DateTime                 @updatedAt @map("updated_at")
+  ResumeTag              ResumeTag[]
+  ResumeMetadata         ResumeMetadata[]
+  ResumeSectionRationale ResumeSectionRationale[]
+
+  @@map("users")
+}
+
+model Resume {
+  id             String  @id @default(uuid())
+  userId         String  @map("user_id")
+  resumeText     String  @map("resume_text")
+  jobDescription String  @map("job_description")
+  modifiedResume String? @map("modified_resume")
+  tailoringMode  String  @map("tailoring_mode")
+  version        Int     @default(1)
+  label          String? @default("") // ✅ Add this
+  atsScore       Int?    @map("ats_score")
+  jdScore        Int?    @map("jd_score")
+  goldenPassed   Boolean @default(false) @map("golden_passed")
+  isRefinement   Boolean @default(false) @map("is_refinement")
+  isSaved        Boolean @default(false) @map("is_saved")
+
+  // Added fields from schema-additions
+  originalResumeId      String? @map("original_resume_id") // Reference to the first version
+  wasManuallyEdited     Boolean @default(false) @map("was_manually_edited")
+  scoresStale           Boolean @default(false) @map("scores_stale")
+  finalModifiedSections String? @map("final_modified_sections") // ✅ Add this(final add)
+
+  // Relations
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  analytics         TailoringAnalytics[]
+  scrubbedResume    ScrubbedResume?
+  promptArchives    PromptArchive[]
+  interactions      ResumeInteraction[]
+  tags              ResumeTag[]
+  metadata          ResumeMetadata?
+  tailoringPrompts  TailoringPrompt[]
+  coverLetters      CoverLetter[]
+  exports           ResumeExport[]
+  tailoringProgress TailoringProgress[]
+  tailoringAttempts TailoringAttempt[]
+  manualEdits       ManualEdit[]
+  manualScorings    ManualScoring[]
+  resumeFeedback    ResumeFeedback[]
+
+  atsWarnings            String?                  @map("ats_warnings") @db.Text
+  createdAt              DateTime                 @default(now()) @map("created_at")
+  updatedAt              DateTime                 @updatedAt @map("updated_at")
+  ResumeSectionRationale ResumeSectionRationale[]
+
+  @@index([userId])
+  @@map("resumes")
+}
+
+model ResumeEvent {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  resumeId       String   @map("resume_id")
+  eventType      String   @map("event_type")
+  resumeText     String?  @map("resume_text")
+  jobDescription String?  @map("job_description")
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("resume_events")
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  eventType String   @map("event_type")
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("analytics_events")
+}
+
+model TailoringAnalytics {
+  id               String   @id @default(uuid())
+  resumeId         String   @map("resume_id")
+  userId           String   @map("user_id")
+  tailoringMode    String   @map("tailoring_mode")
+  iterations       Int
+  atsScore         Int      @map("ats_score")
+  jdScore          Int      @map("jd_score")
+  goldenPassed     Boolean  @map("golden_passed")
+  isRefinement     Boolean  @default(false) @map("is_refinement")
+  createdAt        DateTime @default(now()) @map("created_at")
+  modifiedSections String?  @map("modified_sections") // ✅ Add this(final add)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resumeId])
+  @@map("tailoring_analytics")
+}
+
+model ScrubbedResume {
+  id        String   @id @default(uuid())
+  resumeId  String   @unique @map("resume_id")
+  cleanText String   @map("clean_text")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@map("scrubbed_resumes")
+}
+
+model PromptArchive {
+  id        String   @id @default(uuid())
+  resumeId  String   @map("resume_id")
+  content   String
+  response  String
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@map("prompt_archives")
+}
+
+model ResumeInteraction {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  resumeId  String   @map("resume_id")
+  action    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@map("resume_interactions")
+}
+
+model ResumeTag {
+  id       String @id @default(uuid())
+  userId   String @map("user_id")
+  resumeId String @map("resume_id")
+  tag      String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resumeId])
+  @@map("resume_tags")
+}
+
+model ResumeMetadata {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  resumeId       String   @unique @map("resume_id")
+  contentSnippet String   @map("content_snippet")
+  tailoringMode  String   @map("tailoring_mode")
+  iterations     Int
+  passedRules    Boolean  @map("passed_rules")
+  atsScore       Int      @map("ats_score")
+  jdScore        Int      @map("jd_score")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@map("resume_metadata")
+}
+
+model TailoringPrompt {
+  id            String   @id @default(uuid())
+  resumeId      String   @map("resume_id")
+  tailoringMode String   @map("tailoring_mode")
+  prompt        String
+  attempt       Int
+  version       Int
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@map("tailoring_prompts")
+}
+
+// New models from schema-additions
+
+model TailoringProgress {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  resumeId       String   @map("resume_id")
+  status         String // started, attempt_1, attempt_2, attempt_3, processing, completed, error
+  progress       Int // 0-100
+  currentAttempt Int?     @map("current_attempt")
+  maxAttempts    Int?     @map("max_attempts")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@unique([resumeId, userId], name: "resumeId_userId")
+  @@index([userId])
+  @@index([resumeId])
+  @@map("tailoring_progress")
+}
+
+model TailoringAttempt {
+  id                       String   @id @default(uuid())
+  userId                   String   @map("user_id")
+  resumeId                 String   @map("resume_id")
+  attemptNumber            Int      @map("attempt_number")
+  atsScore                 Int      @map("ats_score")
+  jdScore                  Int      @map("jd_score")
+  goldenPassed             Boolean  @map("golden_passed")
+  feedback                 String
+  suggestions              String
+  atsFeedback              String?  @map("ats_feedback")
+  jdFeedback               String?  @map("jd_feedback")
+  createdAt                DateTime @default(now()) @map("created_at")
+  // New fields for enhanced logging
+  modifiedSectionsSent     String? // JSON string of section names sent for modification
+  modifiedSectionsReceived String? // JSON string of section names that were modified in response
+  promptTokens             Int? // Approximate token count of the prompt
+  //  Added this line:
+  goldenRuleFeedback       String?  @map("golden_rule_feedback") @db.Text
+  iteration                Int?     @map("iteration")
+  modifiedSections         String?  @map("modified_sections") @db.Text
+  score                    Int?     @map("score")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resumeId])
+  @@map("tailoring_attempts")
+}
+
+model ResumeFeedback {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  resumeId       String   @map("resume_id")
+  feedbackType   String   @map("feedback_type") // e.g., "previous_version", "user_feedback", "ai_feedback"
+  feedbackPoints String[] @map("feedback_points")
+  sourceVersion  Int?     @map("source_version")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resumeId])
+  @@map("resume_feedback")
+}
+
+model ManualEdit {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  resumeId   String   @map("resume_id")
+  editedText String   @map("edited_text") @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resumeId])
+  @@map("manual_edits")
+}
+
+model ManualScoring {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  resumeId    String   @map("resume_id")
+  atsScore    Int      @map("ats_score")
+  jdScore     Int      @map("jd_score")
+  atsFeedback String?  @map("ats_feedback") @db.Text
+  jdFeedback  String?  @map("jd_feedback") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resumeId])
+  @@map("manual_scorings")
+}
+
+model CoverLetter {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  resumeId       String   @map("resume_id")
+  jobDescription String   @map("job_description") @db.Text
+  content        String   @db.Text
+  tone           String   @default("professional")
+  atsScore       Int?     @map("ats_score")
+  jdScore        Int?     @map("jd_score")
+  version        Int      @default(1)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resumeId])
+  @@map("cover_letters")
+}
+
+model LinkedInOptimization {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  jobDescription String   @map("job_description") @db.Text
+  originalAbout  String   @map("original_about") @db.Text
+  optimizedAbout String   @map("optimized_about") @db.Text
+  tone           String
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("linkedin_optimizations")
+}
+
+model InterviewSession {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  jobDescription String   @map("job_description") @db.Text
+  selectedTypes  String[] @map("selected_types") // e.g. ["Behavioral", "Technical"]
+  questions      Json     @map("questions") // [{ type: "Behavioral", question: "Tell me about..." }]
+  answers        Json?    @map("answers") // [{ questionId: 1, answer: "My answer..." }]
+  needsReview    Json?    @map("needs_review") // [1, 3, 5] (question indices that need review)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("interview_sessions")
+}
+
+model ResumeExport {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  resumeId   String   @map("resume_id")
+  templateId String   @map("template_id")
+  format     String // pdf, docx
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resumeId])
+  @@map("resume_exports")
+}
+
+// Job Description Intelligence model
+model JobDescriptionIntelligence {
+  id               String   @id @default(uuid())
+  userId           String   @map("user_id")
+  resumeId         String?  @map("resume_id")
+  role             String
+  seniority        String
+  keywords         String[]
+  responsibilities String[]
+  qualifications   String[]
+  categories       Json
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resumeId])
+  @@map("job_description_intelligence")
+}
+
+// Add these models to your Prisma schema
+
+model ResumeSectionRationale {
+  id          String   @id @default(uuid())
+  resumeId    String   @map("resume_id")
+  userId      String   @map("user_id")
+  sectionName String   @map("section_name")
+  rationale   String   @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([resumeId, sectionName])
+  @@index([userId])
+  @@index([resumeId])
+  @@map("resume_section_rationales")
+}
+
+// Add this model to your Prisma schema
+model ContactSubmission {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String   @db.Text
+  createdAt DateTime @default(now())
+  isRead    Boolean  @default(false)
+}

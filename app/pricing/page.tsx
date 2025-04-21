@@ -42,27 +42,27 @@ export default function PricingPage() {
             <div className="space-y-2">
               <div className="flex items-start">
                 <Check className="h-5 w-5 text-green-500 mr-2 mt-0.5" />
-                <span>5 Basic resume tailorings per day</span>
+                <span>50 Basic resume tailorings per day</span>
               </div>
               <div className="flex items-start">
                 <Check className="h-5 w-5 text-green-500 mr-2 mt-0.5" />
-                <span>3 Personalized resume tailorings per day</span>
+                <span>30 Personalized resume tailorings per day</span>
               </div>
               <div className="flex items-start">
                 <Check className="h-5 w-5 text-green-500 mr-2 mt-0.5" />
-                <span>1 Aggressive resume tailoring per day</span>
+                <span>30 Aggressive resume tailoring per day</span>
               </div>
               <div className="flex items-start">
                 <Check className="h-5 w-5 text-green-500 mr-2 mt-0.5" />
-                <span>1 Cover letter generation per day</span>
+                <span>10 Cover letter generation per day</span>
               </div>
               <div className="flex items-start">
                 <Check className="h-5 w-5 text-green-500 mr-2 mt-0.5" />
-                <span>1 LinkedIn optimization per day</span>
+                <span>10 LinkedIn optimization per day</span>
               </div>
               <div className="flex items-start">
                 <Check className="h-5 w-5 text-green-500 mr-2 mt-0.5" />
-                <span>1 Interview coaching session per day</span>
+                <span>10 Interview coaching session per day</span>
               </div>
               <div className="flex items-start">
                 <Check className="h-5 w-5 text-green-500 mr-2 mt-0.5" />

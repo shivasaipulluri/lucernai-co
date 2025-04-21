@@ -1,143 +1,129 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useToast } from "@/components/ui/use-toast"
-import { AlertCircle, Copy, Download, Save, Sparkles, Clock } from "lucide-react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { LucernaSunIcon } from "@/components/lucerna-sun-icon"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { generateCoverLetter, saveCoverLetter } from "@/lib/actions/cover-letter-actions"
-import { formatDistanceToNow } from "date-fns"
+import { useToast } from "@/hooks/use-toast"
 import { useJDAnalysis } from "@/hooks/use-jd-analysis"
 import { JDAnalysisDisplay } from "@/components/intelligence/jd-analysis-display"
-import { debounce } from "@/lib/utils"
+import { Loader2, Save, Download, Copy, CheckCircle2 } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { debounce } from "lodash"
 
+// Define types for the component props
 interface Resume {
   id: string
-  jobDescription: string
-  version: number
+  title?: string
+  createdAt: Date | string
+  version?: number
   tailoringMode?: string
-  createdAt: string | Date
 }
 
 interface CoverLetterClientProps {
   resumes: Resume[]
-  initialResumeId?: string
-  initialJobDescription?: string
+  userId: string
 }
 
-export function CoverLetterClient({ resumes, initialResumeId, initialJobDescription }: CoverLetterClientProps) {
-  const [selectedResumeId, setSelectedResumeId] = useState<string>(initialResumeId || "")
-  const [jobDescription, setJobDescription] = useState<string>(initialJobDescription || "")
-  const [tone, setTone] = useState<string>("professional")
-  const [coverLetter, setCoverLetter] = useState<string>("")
-  const [editedCoverLetter, setEditedCoverLetter] = useState<string>("")
-  const [isGenerating, setIsGenerating] = useState<boolean>(false)
-  const [isSaving, setIsSaving] = useState<boolean>(false)
-  const [error, setError] = useState<string | null>(null)
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false)
-  const [activeTab, setActiveTab] = useState<string>("edit")
-  const [savedCoverLetterId, setSavedCoverLetterId] = useState<string | null>(null)
-  const { analyze, analysis, isAnalyzing, error: analysisError } = useJDAnalysis()
-
-  const outputRef = useRef<HTMLDivElement>(null)
+export default function CoverLetterClient({ resumes, userId }: CoverLetterClientProps) {
   const { toast } = useToast()
   const router = useRouter()
+  const [selectedResume, setSelectedResume] = useState("")
+  const [jobDescription, setJobDescription] = useState("")
+  const [companyName, setCompanyName] = useState("")
+  const [jobTitle, setJobTitle] = useState("")
+  const [coverLetter, setCoverLetter] = useState("")
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isCopied, setIsCopied] = useState(false)
+  const [tone, setTone] = useState("professional")
+  const [format, setFormat] = useState("standard")
+  const [length, setLength] = useState("medium")
+  const [activeTab, setActiveTab] = useState("editor")
 
-  // Get the selected resume details
-  const selectedResume = resumes.find((resume) => resume.id === selectedResumeId)
+  const { analysis, isAnalyzing, error, analyze } = useJDAnalysis()
+  const analysisTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Debounced job description analysis
-  const debouncedAnalyze = debounce((text: string) => {
-    if (text.trim().length > 100) {
-      analyze(text)
-    }
-  }, 1000)
+  // Fix: Use a proper debounced function with useCallback to prevent recreation on every render
+  const debouncedAnalyze = useCallback(
+    debounce((jd: string) => {
+      if (jd.trim().length > 100) {
+        analyze(jd)
+      }
+    }, 1000),
+    [analyze],
+  )
 
-  // Trigger analysis when job description changes
+  // Fix: Only trigger analysis when jobDescription changes, not when debouncedAnalyze changes
   useEffect(() => {
-    debouncedAnalyze(jobDescription)
-  }, [jobDescription, debouncedAnalyze])
-
-  // Auto-populate job description if a resume is selected and no job description is provided
-  useEffect(() => {
-    if (selectedResumeId && !jobDescription && selectedResume) {
-      setJobDescription(selectedResume.jobDescription)
+    // Clear any existing timeout
+    if (analysisTimeoutRef.current) {
+      clearTimeout(analysisTimeoutRef.current)
     }
-  }, [selectedResumeId, jobDescription, selectedResume])
 
-  // Check for unsaved changes
-  useEffect(() => {
-    if (coverLetter && editedCoverLetter && coverLetter !== editedCoverLetter) {
-      setHasUnsavedChanges(true)
-    } else {
-      setHasUnsavedChanges(false)
+    // Only analyze if job description is long enough
+    if (jobDescription.trim().length > 100) {
+      // Set a timeout to prevent rapid successive calls
+      analysisTimeoutRef.current = setTimeout(() => {
+        debouncedAnalyze(jobDescription)
+      }, 500)
     }
-  }, [coverLetter, editedCoverLetter])
 
-  // Handle resume selection
-  const handleResumeChange = (value: string) => {
-    setSelectedResumeId(value)
-
-    // If job description is empty, auto-populate it from the selected resume
-    if (!jobDescription) {
-      const resume = resumes.find((r) => r.id === value)
-      if (resume) {
-        setJobDescription(resume.jobDescription)
+    // Cleanup function
+    return () => {
+      if (analysisTimeoutRef.current) {
+        clearTimeout(analysisTimeoutRef.current)
       }
     }
-  }
+  }, [jobDescription, debouncedAnalyze])
 
-  // Handle generate cover letter
-  const handleGenerateCoverLetter = async () => {
-    // Validate inputs
-    if (!selectedResumeId) {
-      setError("Please select a resume")
+  const handleGenerate = async () => {
+    if (!selectedResume) {
+      toast({
+        title: "Missing Resume",
+        description: "Please select a resume to continue.",
+        variant: "destructive",
+      })
       return
     }
 
     if (!jobDescription) {
-      setError("Please enter a job description")
+      toast({
+        title: "Missing Job Description",
+        description: "Please enter a job description to continue.",
+        variant: "destructive",
+      })
       return
     }
 
-    setError(null)
     setIsGenerating(true)
-
     try {
-      const result = await generateCoverLetter(selectedResumeId, jobDescription, tone)
+      const result = await generateCoverLetter(selectedResume, jobDescription, tone)
 
       if (result.success && result.data) {
         setCoverLetter(result.data.content)
-        setEditedCoverLetter(result.data.content)
-
-        // Scroll to output
-        setTimeout(() => {
-          if (outputRef.current) {
-            outputRef.current.scrollIntoView({ behavior: "smooth" })
-          }
-        }, 100)
-
+        setActiveTab("preview")
         toast({
-          title: "Cover letter generated",
-          description: "Your cover letter has been generated successfully.",
-          duration: 3000,
+          title: "Cover Letter Generated",
+          description: "Your cover letter has been successfully generated.",
         })
       } else {
-        throw new Error(result.error || "Failed to generate cover letter")
+        toast({
+          title: "Generation Failed",
+          description: result.error || "Failed to generate cover letter. Please try again.",
+          variant: "destructive",
+        })
       }
-    } catch (error: any) {
-      setError(error.message)
+    } catch (error) {
+      console.error("Error generating cover letter:", error)
       toast({
-        title: "Generation failed",
-        description: error.message,
+        title: "Generation Error",
+        description: "An unexpected error occurred. Please try again later.",
         variant: "destructive",
       })
     } finally {
@@ -145,31 +131,38 @@ export function CoverLetterClient({ resumes, initialResumeId, initialJobDescript
     }
   }
 
-  // Handle save cover letter
-  const handleSaveCoverLetter = async () => {
-    if (!coverLetter) return
+  const handleSave = async () => {
+    if (!coverLetter) {
+      toast({
+        title: "Nothing to Save",
+        description: "Please generate a cover letter first.",
+        variant: "destructive",
+      })
+      return
+    }
 
     setIsSaving(true)
-
     try {
-      const result = await saveCoverLetter(selectedResumeId, jobDescription, editedCoverLetter, tone)
+      const result = await saveCoverLetter(selectedResume, jobDescription, coverLetter, tone)
 
-      if (result.success && result.data) {
-        setSavedCoverLetterId(result.data.id)
-        setHasUnsavedChanges(false)
-
+      if (result.success) {
         toast({
-          title: "Cover letter saved",
-          description: "Your cover letter has been saved successfully.",
-          duration: 3000,
+          title: "Cover Letter Saved",
+          description: "Your cover letter has been successfully saved.",
         })
+        router.refresh()
       } else {
-        throw new Error(result.error || "Failed to save cover letter")
+        toast({
+          title: "Save Failed",
+          description: result.error || "Failed to save cover letter. Please try again.",
+          variant: "destructive",
+        })
       }
-    } catch (error: any) {
+    } catch (error) {
+      console.error("Error saving cover letter:", error)
       toast({
-        title: "Save failed",
-        description: error.message,
+        title: "Save Error",
+        description: "An unexpected error occurred. Please try again later.",
         variant: "destructive",
       })
     } finally {
@@ -177,341 +170,249 @@ export function CoverLetterClient({ resumes, initialResumeId, initialJobDescript
     }
   }
 
-  // Handle copy to clipboard
-  const handleCopyToClipboard = async () => {
-    try {
-      await navigator.clipboard.writeText(editedCoverLetter)
+  const handleCopy = () => {
+    if (!coverLetter) {
       toast({
-        title: "Copied to clipboard",
-        description: "Cover letter has been copied to your clipboard.",
-        duration: 3000,
-      })
-    } catch (error) {
-      toast({
-        title: "Copy failed",
-        description: "Failed to copy cover letter to clipboard.",
+        title: "Nothing to Copy",
+        description: "Please generate a cover letter first.",
         variant: "destructive",
       })
+      return
     }
+
+    navigator.clipboard.writeText(coverLetter)
+    setIsCopied(true)
+    toast({
+      title: "Copied to Clipboard",
+      description: "Cover letter has been copied to clipboard.",
+    })
+
+    setTimeout(() => {
+      setIsCopied(false)
+    }, 2000)
   }
 
-  // Handle download
   const handleDownload = () => {
-    try {
-      const blob = new Blob([editedCoverLetter], { type: "text/plain" })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `cover-letter-${new Date().toISOString().split("T")[0]}.txt`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-
+    if (!coverLetter) {
       toast({
-        title: "Download started",
-        description: "Your cover letter is being downloaded.",
-        duration: 3000,
-      })
-    } catch (error) {
-      toast({
-        title: "Download failed",
-        description: "Failed to download cover letter.",
+        title: "Nothing to Download",
+        description: "Please generate a cover letter first.",
         variant: "destructive",
       })
+      return
     }
-  }
 
-  // Get the tailoring mode display name
-  const getTailoringModeDisplay = (mode?: string) => {
-    if (!mode) return "Standard"
-
-    switch (mode) {
-      case "basic":
-      case "quick":
-        return "Basic"
-      case "personalized":
-      case "story":
-        return "Personalized"
-      case "aggressive":
-        return "Aggressive"
-      default:
-        return mode.charAt(0).toUpperCase() + mode.slice(1)
-    }
+    const element = document.createElement("a")
+    const file = new Blob([coverLetter], { type: "text/plain" })
+    element.href = URL.createObjectURL(file)
+    element.download = `Cover_Letter_${companyName || "Company"}_${new Date().toISOString().split("T")[0]}.txt`
+    document.body.appendChild(element)
+    element.click()
+    document.body.removeChild(element)
   }
 
   return (
-    <div className="container-wide py-12">
-      <div className="mb-8 text-center">
-        <div className="flex justify-center mb-4">
-          <LucernaSunIcon size={48} glowing={true} />
-        </div>
-        <h1 className="mb-3 font-serif">Cover Letter Generator</h1>
-        <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-          Create a tailored cover letter based on your resume and the job description.
-        </p>
-      </div>
-
-      <div className="grid md:grid-cols-3 gap-6">
+    <div className="container mx-auto p-4 max-w-6xl">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-2">
-          <Card className="mb-6">
+          <Card className="h-full">
             <CardHeader>
-              <CardTitle>Generate Your Cover Letter</CardTitle>
+              <CardTitle>Cover Letter Generator</CardTitle>
               <CardDescription>
-                Select a resume, enter a job description, and choose a tone to generate your cover letter.
+                Create a tailored cover letter based on your resume and the job description.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <Label htmlFor="resume">Select Resume</Label>
-                <Select value={selectedResumeId} onValueChange={handleResumeChange}>
-                  <SelectTrigger id="resume">
-                    <SelectValue placeholder="Choose a resume" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {resumes.length > 0 ? (
-                      resumes.map((resume) => (
-                        <SelectItem key={resume.id} value={resume.id}>
-                          <div className="flex flex-col">
-                            <span>
-                              Resume v{resume.version} ({getTailoringModeDisplay(resume.tailoringMode)})
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              Created {formatDistanceToNow(new Date(resume.createdAt), { addSuffix: true })}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="none" disabled>
-                        No resumes available
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-                {selectedResume && (
-                  <div className="mt-2 text-xs text-gray-500 flex items-center">
-                    <Clock className="h-3 w-3 mr-1" />
-                    Created {formatDistanceToNow(new Date(selectedResume.createdAt), { addSuffix: true })}
+            <CardContent>
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="editor">Editor</TabsTrigger>
+                  <TabsTrigger value="preview">Preview</TabsTrigger>
+                </TabsList>
+                <TabsContent value="editor" className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="resume">Select Resume</Label>
+                    <Select value={selectedResume} onValueChange={setSelectedResume}>
+                      <SelectTrigger id="resume">
+                        <SelectValue placeholder="Select a resume" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {resumes.map((resume: Resume) => (
+                          <SelectItem key={resume.id} value={resume.id}>
+                            {resume.title || "Untitled Resume"}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                )}
-              </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="jobDescription">Job Description</Label>
-                <Textarea
-                  id="jobDescription"
-                  value={jobDescription}
-                  onChange={(e) => setJobDescription(e.target.value)}
-                  placeholder="Paste the job description here..."
-                  className="min-h-[200px]"
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="jobTitle">Job Title</Label>
+                    <Input
+                      id="jobTitle"
+                      placeholder="e.g., Software Engineer"
+                      value={jobTitle}
+                      onChange={(e) => setJobTitle(e.target.value)}
+                    />
+                  </div>
 
-              {/* JD Analysis Display */}
-              {(analysis || isAnalyzing) && jobDescription.trim().length > 100 && (
-                <div className="mt-2">
-                  <JDAnalysisDisplay
-                    analysis={analysis}
-                    isLoading={isAnalyzing}
-                    compact={true}
-                    className="border-dashed"
-                  />
-                </div>
-              )}
+                  <div className="space-y-2">
+                    <Label htmlFor="companyName">Company Name</Label>
+                    <Input
+                      id="companyName"
+                      placeholder="e.g., Acme Corporation"
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="tone">Cover Letter Tone</Label>
-                <Select value={tone} onValueChange={setTone}>
-                  <SelectTrigger id="tone">
-                    <SelectValue placeholder="Select a tone" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="professional">
-                      <div className="flex flex-col">
-                        <span>Professional</span>
-                        <span className="text-xs text-gray-500">Formal and business-like</span>
+                  <div className="space-y-2">
+                    <Label htmlFor="jobDescription">
+                      Job Description
+                      {isAnalyzing && <span className="ml-2 text-xs text-muted-foreground">Analyzing...</span>}
+                    </Label>
+                    <Textarea
+                      id="jobDescription"
+                      placeholder="Paste the job description here..."
+                      className="min-h-[200px]"
+                      value={jobDescription}
+                      onChange={(e) => setJobDescription(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="tone">Tone</Label>
+                      <Select value={tone} onValueChange={setTone}>
+                        <SelectTrigger id="tone">
+                          <SelectValue placeholder="Select tone" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="professional">Professional</SelectItem>
+                          <SelectItem value="conversational">Conversational</SelectItem>
+                          <SelectItem value="enthusiastic">Enthusiastic</SelectItem>
+                          <SelectItem value="formal">Formal</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="format">Format</Label>
+                      <Select value={format} onValueChange={setFormat}>
+                        <SelectTrigger id="format">
+                          <SelectValue placeholder="Select format" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="standard">Standard</SelectItem>
+                          <SelectItem value="modern">Modern</SelectItem>
+                          <SelectItem value="traditional">Traditional</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="length">Length</Label>
+                      <Select value={length} onValueChange={setLength}>
+                        <SelectTrigger id="length">
+                          <SelectValue placeholder="Select length" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="short">Short</SelectItem>
+                          <SelectItem value="medium">Medium</SelectItem>
+                          <SelectItem value="long">Long</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={handleGenerate}
+                    disabled={isGenerating || !selectedResume || !jobDescription}
+                    className="w-full"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      "Generate Cover Letter"
+                    )}
+                  </Button>
+                </TabsContent>
+
+                <TabsContent value="preview" className="space-y-4">
+                  {coverLetter ? (
+                    <>
+                      <div className="border rounded-md p-4 min-h-[400px] whitespace-pre-wrap">{coverLetter}</div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button onClick={handleSave} disabled={isSaving}>
+                          {isSaving ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              <Save className="mr-2 h-4 w-4" />
+                              Save
+                            </>
+                          )}
+                        </Button>
+                        <Button onClick={handleCopy} variant="outline">
+                          {isCopied ? (
+                            <>
+                              <CheckCircle2 className="mr-2 h-4 w-4" />
+                              Copied!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="mr-2 h-4 w-4" />
+                              Copy
+                            </>
+                          )}
+                        </Button>
+                        <Button onClick={handleDownload} variant="outline">
+                          <Download className="mr-2 h-4 w-4" />
+                          Download
+                        </Button>
                       </div>
-                    </SelectItem>
-                    <SelectItem value="enthusiastic">
-                      <div className="flex flex-col">
-                        <span>Enthusiastic</span>
-                        <span className="text-xs text-gray-500">Energetic and passionate</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="confident">
-                      <div className="flex flex-col">
-                        <span>Confident</span>
-                        <span className="text-xs text-gray-500">Assertive and self-assured</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="conversational">
-                      <div className="flex flex-col">
-                        <span>Conversational</span>
-                        <span className="text-xs text-gray-500">Friendly and approachable</span>
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {error && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-
-              <Button
-                onClick={handleGenerateCoverLetter}
-                disabled={isGenerating || !selectedResumeId || !jobDescription}
-                className="w-full sm:w-auto"
-              >
-                {isGenerating ? (
-                  <>
-                    <span className="animate-spin mr-2">⏳</span>
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="mr-2 h-5 w-5" />
-                    Generate Cover Letter
-                  </>
-                )}
-              </Button>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center min-h-[400px] text-center text-muted-foreground">
+                      <p>No cover letter generated yet.</p>
+                      <p className="text-sm">Go to the Editor tab to generate a cover letter.</p>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
-
-          {coverLetter && (
-            <div ref={outputRef} className="animate-in fade-in duration-500">
-              <Card className="mb-6">
-                <CardHeader>
-                  <CardTitle className="flex justify-between items-center">
-                    <span>Your Cover Letter</span>
-                    {savedCoverLetterId && !hasUnsavedChanges && (
-                      <Badge variant="outline" className="bg-green-50 text-green-700">
-                        Saved
-                      </Badge>
-                    )}
-                    {hasUnsavedChanges && (
-                      <Badge variant="outline" className="bg-amber-50 text-amber-700">
-                        Unsaved Changes
-                      </Badge>
-                    )}
-                  </CardTitle>
-                  <CardDescription>
-                    Edit your cover letter below. You can make changes before saving or downloading.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Tabs value={activeTab} onValueChange={setActiveTab}>
-                    <TabsList className="mb-4">
-                      <TabsTrigger value="edit">Edit</TabsTrigger>
-                      <TabsTrigger value="preview">Preview</TabsTrigger>
-                    </TabsList>
-
-                    <TabsContent value="edit">
-                      <Textarea
-                        value={editedCoverLetter}
-                        onChange={(e) => setEditedCoverLetter(e.target.value)}
-                        className="min-h-[400px] font-mono text-sm"
-                      />
-                    </TabsContent>
-
-                    <TabsContent value="preview">
-                      <div className="bg-white p-6 border rounded-md min-h-[400px] whitespace-pre-wrap">
-                        {editedCoverLetter}
-                      </div>
-                    </TabsContent>
-                  </Tabs>
-
-                  <div className="flex flex-wrap gap-3 mt-6">
-                    <Button
-                      onClick={handleSaveCoverLetter}
-                      disabled={isSaving || !editedCoverLetter}
-                      className="flex items-center gap-2"
-                    >
-                      <Save className="h-4 w-4" />
-                      {isSaving ? "Saving..." : "Save Cover Letter"}
-                    </Button>
-
-                    <Button
-                      onClick={handleCopyToClipboard}
-                      variant="outline"
-                      disabled={!editedCoverLetter}
-                      className="flex items-center gap-2"
-                    >
-                      <Copy className="h-4 w-4" />
-                      Copy to Clipboard
-                    </Button>
-
-                    <Button
-                      onClick={handleDownload}
-                      variant="outline"
-                      disabled={!editedCoverLetter}
-                      className="flex items-center gap-2"
-                    >
-                      <Download className="h-4 w-4" />
-                      Download
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
         </div>
 
         <div>
-          <Card className="sticky top-6">
+          <Card className="h-full">
             <CardHeader>
-              <CardTitle>Cover Letter Tips</CardTitle>
-              <CardDescription>Best practices for effective cover letters</CardDescription>
+              <CardTitle>Job Analysis</CardTitle>
+              <CardDescription>AI-powered insights from the job description.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <h3 className="text-sm font-medium mb-2">Keep it concise</h3>
-                <p className="text-sm text-gray-600">
-                  Aim for 250-300 words. Recruiters spend an average of 7 seconds scanning a cover letter.
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-medium mb-2">Address the hiring manager</h3>
-                <p className="text-sm text-gray-600">
-                  If possible, find the name of the hiring manager. Otherwise, "Dear Hiring Team" works well.
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-medium mb-2">Show enthusiasm</h3>
-                <p className="text-sm text-gray-600">
-                  Express genuine interest in the role and company. Research the company beforehand.
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-medium mb-2">Highlight relevant experience</h3>
-                <p className="text-sm text-gray-600">
-                  Focus on achievements that directly relate to the job requirements.
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-medium mb-2">End with a call to action</h3>
-                <p className="text-sm text-gray-600">
-                  Express interest in an interview and thank them for their consideration.
-                </p>
-              </div>
-
-              <div className="pt-4">
-                <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
-                  <h4 className="font-medium mb-2 text-blue-800">ATS Compatibility</h4>
-                  <p className="text-xs text-blue-700">
-                    Our cover letter generator creates ATS-friendly content that will pass through Applicant Tracking
-                    Systems while maintaining a human touch.
-                  </p>
+            <CardContent>
+              {analysis ? (
+                <JDAnalysisDisplay analysis={analysis} />
+              ) : (
+                <div className="flex flex-col items-center justify-center min-h-[200px] text-center text-muted-foreground">
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="h-8 w-8 animate-spin mb-2" />
+                      <p>Analyzing job description...</p>
+                    </>
+                  ) : (
+                    <>
+                      <p>No job analysis available.</p>
+                      <p className="text-sm">Enter a job description to see AI-powered insights.</p>
+                    </>
+                  )}
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </div>
