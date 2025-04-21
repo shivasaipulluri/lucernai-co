@@ -3,6 +3,7 @@ import type { TailoringMode } from "@/utils/ai/compile-tailoring-prompt"
 import type { InterviewType, InterviewQuestion, InterviewAnswer } from "@/lib/actions/interview-actions"
 
 export interface Resume {
+  jobTitle: String | null
   id: string
   userId: string
   resumeText: string

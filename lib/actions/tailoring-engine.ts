@@ -120,29 +120,6 @@ export async function getTailoringProgress(resumeId: string): Promise<TailoringP
       return { status: "not_started", progress: 0 }
     }
 
-    // Check if the progress is stale (older than 5 minutes)
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
-    if (progress.updatedAt < fiveMinutesAgo && progress.status !== "completed" && progress.status !== "error") {
-      debugLog("PROGRESS", `Progress is stale (older than 5 minutes), marking as error`)
-
-      // Update the progress to error state
-      await prisma.tailoringProgress.update({
-        where: {
-          resumeId_userId: {
-            resumeId: resumeId,
-            userId: user.id,
-          },
-        },
-        data: {
-          status: "error",
-          progress: 0,
-          updatedAt: new Date(),
-        },
-      })
-
-      return { status: "error", progress: 0 }
-    }
-
     debugLog(
       "PROGRESS",
       `Found progress for resumeId: ${resumeId}, status: ${progress.status}, progress: ${progress.progress}`,
@@ -192,30 +169,6 @@ export async function startTailoringAnalysis(resumeId: string, isRefinement = fa
 
     debugLog("START", `Resume found: ${resumeId}`)
 
-    // Check if there's already a tailoring in progress
-    const existingProgress = await prisma.tailoringProgress.findUnique({
-      where: {
-        resumeId_userId: {
-          resumeId: resumeId,
-          userId: user.id,
-        },
-      },
-    })
-
-    // If there's an existing progress that's not in error state and not completed,
-    // check if it's stale (older than 5 minutes)
-    if (existingProgress && existingProgress.status !== "error" && existingProgress.status !== "completed") {
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
-
-      if (existingProgress.updatedAt < fiveMinutesAgo) {
-        debugLog("START", `Existing progress is stale (older than 5 minutes), resetting`)
-      } else {
-        // If it's not stale, we'll just return success and let the client continue checking progress
-        debugLog("START", `Tailoring already in progress and not stale, returning success`)
-        return { success: true }
-      }
-    }
-
     // Create or update the tailoring progress
     const progressResult = await prisma.tailoringProgress.upsert({
       where: {
@@ -229,7 +182,6 @@ export async function startTailoringAnalysis(resumeId: string, isRefinement = fa
         progress: 5,
         currentAttempt: 0,
         maxAttempts: 3,
-        updatedAt: new Date(),
       },
       create: {
         resumeId: resumeId,
@@ -284,16 +236,6 @@ function sha256Hash(text: string): string {
   const hash = createHash("sha256")
   hash.update(text)
   return hash.digest("hex")
-}
-
-/**
- * Helper function to clean section content
- */
-function cleanSectionContent(text: string): string {
-  // Remove any leading/trailing whitespace
-  const cleanedText = text.trim()
-
-  return cleanedText
 }
 
 /**
@@ -445,11 +387,8 @@ export async function runTailoringAnalysisWithAnalytics(
           continue
         }
 
-        // Clean the generated text immediately to remove any debugging markers
-        const cleanedText = cleanResumeOutput(text)
-        tailoredResume = cleanedText
-
-        debugLog("TAILOR", `Generated and cleaned tailored resume, length: ${tailoredResume.length} chars`)
+        tailoredResume = text
+        debugLog("TAILOR", `Generated tailored resume, length: ${tailoredResume.length} chars`)
         debugLog("TAILOR", `Preview: ${previewContent(tailoredResume, 100)}`)
 
         // Extract all sections from the first iteration result
@@ -463,8 +402,7 @@ export async function runTailoringAnalysisWithAnalytics(
         // Update the modifiedSectionsMap with the new sections
         Object.keys(newSections).forEach((sectionName) => {
           if (modifiedSections[sectionName]) {
-            // Clean the section content before storing it
-            modifiedSectionsMap[sectionName] = cleanSectionContent(newSections[sectionName])
+            modifiedSectionsMap[sectionName] = newSections[sectionName]
           }
         })
 
@@ -531,18 +469,14 @@ export async function runTailoringAnalysisWithAnalytics(
           continue
         }
 
-        // Clean the generated text immediately to remove any debugging markers
-        const cleanedText = cleanResumeOutput(text)
-
         // Parse the refined sections from the response
         const refinedSections: Record<string, string> = {}
-        const sectionMatches = cleanedText.matchAll(/### (.+?) ###([\s\S]+?)(?=### |$)/g)
+        const sectionMatches = text.matchAll(/### (.+?) ###([\s\S]+?)(?=### |$)/g)
 
         for (const match of sectionMatches) {
           const sectionName = match[1].trim()
           const sectionContent = match[2].trim()
-          // Clean the section content before storing it
-          refinedSections[sectionName] = cleanSectionContent(sectionContent)
+          refinedSections[sectionName] = sectionContent
         }
 
         // Update the current resume sections with the refined sections, but only if there's a real difference
@@ -661,15 +595,15 @@ export async function runTailoringAnalysisWithAnalytics(
     // Ensure all original sections are present in the final output
     Object.keys(originalSections).forEach((sectionName) => {
       if (!modifiedSectionsMap[sectionName]) {
-        modifiedSectionsMap[sectionName] = cleanSectionContent(originalSections[sectionName])
-        debugLog("TAILOR", `Section "${sectionName}" was not modified, using original content`)
+        modifiedSectionsMap[sectionName] = originalSections[sectionName]
+        debugLog(`Section "${sectionName}" was not modified`, `using original content`)
       }
     })
 
     // Log if any section was not modified in any iteration
     Object.keys(originalSections).forEach((section) => {
       if (!allModifiedSections.includes(section)) {
-        debugLog("TAILOR", `Section "${section}" was not modified in any iteration.`)
+        console.warn(`⚠️ Section "${section}" was not modified in any iteration.`, "")
       }
     })
 
@@ -677,7 +611,7 @@ export async function runTailoringAnalysisWithAnalytics(
     const finalTailoredResume = reconstructResumeFromSections(modifiedSectionsMap)
     debugLog("TAILOR", `Reconstructed final resume from all sections, length: ${finalTailoredResume.length} chars`)
 
-    // Clean the tailored resume output one final time to ensure no debugging markers remain
+    // Clean the tailored resume output
     const cleanedResume = cleanResumeOutput(finalTailoredResume)
     debugLog("TAILOR", `Cleaned resume output, length: ${cleanedResume.length} chars`)
     debugLog("TAILOR", `Preview: ${previewContent(cleanedResume, 100)}`)
@@ -784,8 +718,6 @@ Please try again or contact support if the problem persists.
       }
     } catch (error) {
       errorLog("TAILOR", `Error updating resume:`, error)
-      // Update progress to error  {
-      errorLog("TAILOR", `Error updating resume:`, error)
       // Update progress to error
       await updateTailoringProgress(resumeId, user.id, "error", 0)
       throw error
@@ -829,16 +761,17 @@ Please try again or contact support if the problem persists.
     debugLog("TAILOR", `Logged tailoring analytics`)
 
     // Revalidate paths immediately after completion
-    try {
-      await revalidateResumePage(resumeId)
-      await revalidateDashboardPage()
-      debugLog("TAILOR", `Revalidated paths for resumeId: ${resumeId}`)
-    } catch (revalidateError) {
-      errorLog("TAILOR", "Error revalidating paths:", revalidateError)
-      // Continue even if revalidation fails
-    }
-
+    // try {
+    //   await revalidateResumePage(resumeId)
+    //   await revalidateDashboardPage()
+    //   debugLog("TAILOR", `Revalidated paths for resumeId: ${resumeId}`)
+    // } catch (revalidateError) {
+    //   errorLog("TAILOR", "Error revalidating paths:", revalidateError)
+    //   // Continue even if revalidation fails
+    // }
+    // We'll avoid calling revalidatePath during render
     debugLog("TAILOR", `Completed tailoring for resumeId: ${resumeId}`)
+    // We don't need to call revalidatePath here as the client will refresh the page
 
     return {
       success: true,

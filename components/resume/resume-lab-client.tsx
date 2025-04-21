@@ -33,14 +33,12 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
   const [isInitialTailoring, setIsInitialTailoring] = useState(!resume?.modifiedResume)
   const [showVersionHistory, setShowVersionHistory] = useState(false)
   const [debugInfo, setDebugInfo] = useState<string>("")
-  const [stuckDetected, setStuckDetected] = useState(false)
   const progressCheckCountRef = useRef(0)
   const progressCheckIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const lastProgressRef = useRef<number>(initialProgress.progress)
-  const stuckTimerRef = useRef<NodeJS.Timeout | null>(null)
   const completedRef = useRef(false)
   const { toast } = useToast()
   const router = useRouter()
+  const [isRefreshingAfterCompletion, setIsRefreshingAfterCompletion] = useState(false)
 
   // Add debug logging
   const logDebug = useCallback((message: string) => {
@@ -68,10 +66,6 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
         clearInterval(progressCheckIntervalRef.current)
         progressCheckIntervalRef.current = null
       }
-      if (stuckTimerRef.current) {
-        clearTimeout(stuckTimerRef.current)
-        stuckTimerRef.current = null
-      }
     }
   }, [])
 
@@ -91,35 +85,20 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
       // Do an immediate check
       checkProgress()
 
-      // Set up stuck detection timer - if no progress after 45 seconds, consider it stuck
-      if (stuckTimerRef.current) {
-        clearTimeout(stuckTimerRef.current)
-      }
-
-      stuckTimerRef.current = setTimeout(() => {
-        if (progress.status !== "completed" && progress.status !== "error" && progress.progress < 20) {
-          logDebug("Stuck detected - no progress after 45 seconds")
-          setStuckDetected(true)
-        }
-      }, 45000)
-
       return () => {
         if (progressCheckIntervalRef.current) {
           clearInterval(progressCheckIntervalRef.current)
           progressCheckIntervalRef.current = null
         }
-        if (stuckTimerRef.current) {
-          clearTimeout(stuckTimerRef.current)
-          stuckTimerRef.current = null
-        }
       }
     }
-  }, [isInitialTailoring, progress.status, progress.progress])
+  }, [isInitialTailoring, progress.status])
 
   // Effect to handle completed status
   useEffect(() => {
     if (progress.status === "completed" && !completedRef.current) {
       completedRef.current = true
+      setIsRefreshingAfterCompletion(true) // Set loading state during refresh
       logDebug("Tailoring completed, refreshing page...")
 
       // Clear interval
@@ -140,6 +119,10 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
       setTimeout(() => {
         logDebug("Performing final refresh after completion")
         router.refresh()
+        // Reset the refresh loading state after a delay to ensure data is loaded
+        setTimeout(() => {
+          setIsRefreshingAfterCompletion(false)
+        }, 1000)
       }, 3000)
     }
   }, [progress.status, router, logDebug])
@@ -165,24 +148,6 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
 
       const result = await getTailoringProgress(resumeId)
       logDebug(`Progress check result: ${JSON.stringify(result)}`)
-
-      // Check if progress is stuck (same progress value for multiple checks)
-      if (result.progress === lastProgressRef.current && checkCount > 5) {
-        logDebug(`Progress appears stuck at ${result.progress}%`)
-
-        // After 10 checks with no progress change, mark as potentially stuck
-        if (checkCount > 10 && result.progress < 20) {
-          setStuckDetected(true)
-        }
-      } else {
-        // Progress changed, update the last progress value
-        lastProgressRef.current = result.progress
-
-        // If we previously detected a stuck state but now have progress, clear it
-        if (stuckDetected && result.progress > lastProgressRef.current) {
-          setStuckDetected(false)
-        }
-      }
 
       // Only update if the status has changed or progress has increased
       if (result.status !== progress.status || result.progress > progress.progress) {
@@ -242,7 +207,7 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
         }
       }
     }
-  }, [resumeId, progress.status, progress.progress, router, toast, logDebug, stuckDetected])
+  }, [resumeId, progress.status, progress.progress, router, toast, logDebug])
 
   // Start tailoring if needed
   useEffect(() => {
@@ -259,14 +224,6 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
               description: "Lucerna AI is tailoring your resume...",
               duration: 3000,
             })
-
-            // Explicitly start the tailoring process
-            const startResult = await startTailoringAnalysis(resumeId, false)
-            logDebug(`Tailoring start result: ${JSON.stringify(startResult)}`)
-
-            if (!startResult.success) {
-              throw new Error(startResult.error || "Failed to start tailoring")
-            }
           }
 
           // Start checking progress
@@ -290,7 +247,7 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
     }
 
     startTailoring()
-  }, [isInitialTailoring, progress.status, toast, checkProgress, logDebug, resumeId])
+  }, [isInitialTailoring, progress.status, toast, checkProgress, logDebug])
 
   const handleRefine = async () => {
     if (!resumeId || isRefining) return
@@ -369,7 +326,6 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
   const handleRetryTailoring = async () => {
     logDebug(`Manual retry of tailoring requested`)
     setIsRetrying(true)
-    setStuckDetected(false)
 
     try {
       // Reset completion flag
@@ -392,7 +348,6 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
 
         // Reset progress check counter
         progressCheckCountRef.current = 0
-        lastProgressRef.current = 5
 
         // Set up interval for checking progress
         if (progressCheckIntervalRef.current) {
@@ -460,39 +415,6 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
         )}
       </div>
 
-      {/* Debug information - only visible in development */}
-      {process.env.NODE_ENV === "development" && (
-        <Card className="mb-8 bg-yellow-50 border-yellow-200">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="h-5 w-5 text-yellow-500 mt-0.5" />
-              <div>
-                <h3 className="font-medium text-yellow-700">Client Debug Information</h3>
-                <p className="text-sm text-yellow-600 mt-1">
-                  Resume ID: {resumeId}
-                  <br />
-                  Modified Resume: {resume?.modifiedResume ? "exists" : "null"}
-                  <br />
-                  Tailoring Attempts: {resume?.tailoringAttempts?.length || 0}
-                  <br />
-                  Progress Status: {progress.status}
-                  <br />
-                  Progress Value: {progress.progress}%<br />
-                  Is Initial Tailoring: {isInitialTailoring ? "true" : "false"}
-                  <br />
-                  Progress Check Count: {progressCheckCountRef.current}
-                  <br />
-                  Completed Flag: {completedRef.current ? "true" : "false"}
-                  <br />
-                  Stuck Detected: {stuckDetected ? "true" : "false"}
-                </p>
-                <pre className="text-xs bg-yellow-100 p-2 mt-2 rounded max-h-40 overflow-y-auto">{debugInfo}</pre>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {showVersionHistory && versionHistory.length > 0 && (
         <div className="mb-8">
           <VersionHistory versions={versionHistory} currentVersionId={resumeId} />
@@ -501,58 +423,32 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
 
       <div className="grid md:grid-cols-3 gap-6">
         <div className="md:col-span-2">
-          {isLoading ? (
+          {isLoading || isRefreshingAfterCompletion ? (
             <Card className="overflow-hidden">
               <CardContent className="p-8">
                 <div className="flex flex-col items-center justify-center text-center">
                   <LucernaSunIcon size={48} glowing={true} className="mb-6 animate-pulse" />
-                  <h2 className="text-2xl font-semibold mb-4 font-serif">Tailoring Your Resume</h2>
+                  <h2 className="text-2xl font-semibold mb-4 font-serif">
+                    {isRefreshingAfterCompletion ? "Loading Your Resume..." : "Tailoring Your Resume"}
+                  </h2>
                   <p className="text-gray-600 mb-8 max-w-md">
-                    Lucerna AI is analyzing your resume and the job description to create a perfectly tailored version.
+                    {isRefreshingAfterCompletion
+                      ? "Your tailored resume is ready and loading..."
+                      : "Lucerna AI is analyzing your resume and the job description to create a perfectly tailored version."}
                   </p>
 
                   <TailoringProgressIndicator
-                    progress={progress.progress}
+                    progress={isRefreshingAfterCompletion ? 100 : progress.progress}
                     currentAttempt={progress.currentAttempt}
                     maxAttempts={progress.maxAttempts}
-                    status={progress.status}
+                    status={isRefreshingAfterCompletion ? "loading_resume" : progress.status}
                   />
-
-                  {stuckDetected && (
-                    <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-lg max-w-md">
-                      <h3 className="text-amber-700 font-medium flex items-center">
-                        <AlertTriangle className="h-4 w-4 mr-2" />
-                        Tailoring Process May Be Stuck
-                      </h3>
-                      <p className="text-amber-600 text-sm mt-2">
-                        The tailoring process seems to be taking longer than expected. You can wait a bit longer or try
-                        restarting the process.
-                      </p>
-                      <Button
-                        onClick={handleRetryTailoring}
-                        variant="outline"
-                        className="mt-3 bg-white"
-                        disabled={isRetrying}
-                      >
-                        {isRetrying ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Restarting...
-                          </>
-                        ) : (
-                          <>
-                            <RotateCw className="h-4 w-4 mr-2" />
-                            Restart Tailoring
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  )}
 
                   <div className="mt-8 text-sm text-gray-500 max-w-md">
                     <p>
-                      Our AI is making multiple passes to ensure the highest quality result. This typically takes 30-60
-                      seconds.
+                      {isRefreshingAfterCompletion
+                        ? "Almost there! Loading your tailored resume..."
+                        : "Our AI is making multiple passes to ensure the highest quality result. This typically takes 30-60 seconds."}
                     </p>
                   </div>
                 </div>

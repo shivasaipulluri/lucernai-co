@@ -1,13 +1,9 @@
-export const dynamic = "force-dynamic"
-
-
 import { createClient } from "@/lib/supabase/server"
 import { prisma } from "@/lib/prisma"
-import { CoverLetterClient } from "@/components/cover-letter/cover-letter-client"
+import CoverLetterClient from "@/components/cover-letter/cover-letter-client"
 import { redirect } from "next/navigation"
 
 // Ensure we're using the same type in both files
-
 type ResumeForCoverLetter = {
   id: string
   jobDescription: string
@@ -72,15 +68,20 @@ export default async function CoverLetterPage({
   }
 
   // Await searchParams to ensure it's fully resolved
-  const params = await searchParams;
+  const params = await searchParams
 
   // Get the resumeId and jobDescription from the query parameters
-  const resumeId = params.resumeId;
-  const jobDescription = params.jobDescription;
+  const resumeId = params.resumeId
+  const jobDescription = params.jobDescription
 
   // Later in the file, when passing data to the component:
   const resumes: ResumeForCoverLetter[] =
     resumeResult.success && Array.isArray(resumeResult.data) ? resumeResult.data : []
 
-  return <CoverLetterClient resumes={resumes} initialResumeId={resumeId} initialJobDescription={jobDescription} />
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  return <CoverLetterClient resumes={resumes} userId={user?.id || ""} />
 }
