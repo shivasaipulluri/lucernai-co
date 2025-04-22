@@ -101,7 +101,7 @@ export function NavBar() {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem>
-                    <SignOutButton variant="ghost" size="sm" className="w-full justify-start p-0 h-auto font-normal" />
+                    <SignOutButton variant="ghost" size="sm" />
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -158,7 +158,7 @@ export function NavBar() {
                     <Link href="/profile">Profile</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem>
-                    <SignOutButton variant="ghost" size="sm" className="w-full justify-start p-0 h-auto font-normal" />
+                    <SignOutButton variant="ghost" size="sm" />
                   </DropdownMenuItem>
                 </>
               ) : (

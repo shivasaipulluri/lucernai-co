@@ -24,6 +24,12 @@ export async function createClient() {
           }
         },
       },
+      auth: {
+        detectSessionInUrl: true,
+        flowType: "pkce",
+        persistSession: true,
+        autoRefreshToken: true,
+      },
     },
   )
 }

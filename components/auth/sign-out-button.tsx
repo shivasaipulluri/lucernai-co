@@ -1,39 +1,51 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { createClient } from "@/lib/supabase/client"
 import { LogOut, Loader2 } from "lucide-react"
+import { signOut } from "@/lib/actions/auth-actions"
+import { useToast } from "@/hooks/use-toast"
 
 interface SignOutButtonProps {
   variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link"
   size?: "default" | "sm" | "lg" | "icon"
   className?: string
-  redirectTo?: string
 }
 
-export function SignOutButton({
-  variant = "ghost",
-  size = "sm",
-  className = "",
-  redirectTo = "/",
-}: SignOutButtonProps) {
+export function SignOutButton({ variant = "ghost", size = "sm", className = "" }: SignOutButtonProps) {
   const [isLoading, setIsLoading] = useState(false)
-  const router = useRouter()
-  const supabase = createClient()
+  const { toast } = useToast()
 
   const handleSignOut = async () => {
     setIsLoading(true)
+    console.log("SignOutButton: Sign out initiated")
 
     try {
-      await supabase.auth.signOut()
-      router.push(redirectTo)
-      router.refresh()
+      // Show toast before redirecting
+      toast({
+        title: "Signing out",
+        description: "You are being signed out...",
+      })
+
+      // Use the server action directly - this should trigger the redirect
+      await signOut()
+
+      // If we somehow get here (we shouldn't because of the redirect),
+      // force a hard refresh to the home page using the current origin
+      console.log("SignOutButton: Server action completed without redirect, forcing navigation")
+      window.location.href = "/"
     } catch (error) {
-      console.error("Error signing out:", error)
-    } finally {
+      console.error("SignOutButton: Error signing out:", error)
       setIsLoading(false)
+
+      toast({
+        title: "You are Leaving Me",
+        description: "I Miss You Here..! (From Lucerna)",
+        variant: "destructive",
+      })
+
+      // Even if there's an error, try to redirect to home
+      window.location.href = "/"
     }
   }
 
