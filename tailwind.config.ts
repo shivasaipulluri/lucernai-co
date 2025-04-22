@@ -1,6 +1,6 @@
 import type { Config } from "tailwindcss"
 
-const config: Config = {
+const config = {
   darkMode: ["class"],
   content: [
     "./pages/**/*.{ts,tsx}",
@@ -9,6 +9,7 @@ const config: Config = {
     "./src/**/*.{ts,tsx}",
     "*.{js,ts,jsx,tsx,mdx}",
   ],
+  prefix: "",
   theme: {
     container: {
       center: true,
@@ -19,16 +20,16 @@ const config: Config = {
     },
     extend: {
       colors: {
-        // Lucerna custom colors
-        midnight: "#0F172A", // Primary dark blue
-        gold: "#FBBF24", // Soft Gold
-        d4af37: "#d4af37", // Muted Gold
-
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
+        midnight: "hsl(var(--midnight))",
+        sky: "hsl(var(--sky))",
+        forest: "hsl(var(--forest))",
+        cloud: "hsl(var(--cloud))",
+        gold: "#FBBF24" /* Add this line for the Soft Gold color */,
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
@@ -84,6 +85,6 @@ const config: Config = {
     },
   },
   plugins: [require("tailwindcss-animate")],
-}
+} satisfies Config
 
 export default config

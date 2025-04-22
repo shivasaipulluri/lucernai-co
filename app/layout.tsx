@@ -9,6 +9,8 @@ import SupabaseProvider from "@/lib/supabase/provider"
 import { createClient } from "@/lib/supabase/server"
 import { Inter, Playfair_Display } from "next/font/google"
 import { CookieConsent } from "@/components/cookie-consent"
+import { defaultMetadata } from "./seo-metadata"
+import { HomePageStructuredData, ResumeServiceStructuredData } from "@/components/structured-data"
 
 // Configure the Inter font with all needed weights
 const inter = Inter({
@@ -26,10 +28,7 @@ const playfair = Playfair_Display({
   display: "swap",
 })
 
-export const metadata: Metadata = {
-  title: "Lucerna AI - Illuminate Your Career Journey",
-  description: "AI-powered resume tailoring to help you stand out in the job market",
-}
+export const metadata: Metadata = defaultMetadata
 
 export default async function RootLayout({
   children,
@@ -43,6 +42,11 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <HomePageStructuredData />
+        <ResumeServiceStructuredData />
+      </head>
       <body className={`${inter.variable} ${playfair.variable} font-sans bg-background`}>
         <SupabaseProvider initialUser={user}>
           <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
