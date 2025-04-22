@@ -33,7 +33,8 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<"signin" | "signup">(isSignUp ? "signup" : "signin")
+  const [activeTab, setActiveTab] = useState<"signin" | "signup" | "magic">(isSignUp ? "signup" : "signin")
+  const [showMagicLinkSent, setShowMagicLinkSent] = useState(false)
   const [errors, setErrors] = useState<{
     email?: string
     password?: string
@@ -107,10 +108,8 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
           duration: 5000,
         })
 
-        // Show confirmation message
-        setErrors({
-          general: "Please check your email to verify your account. You can close this page.",
-        })
+        // Show confirmation message but don't redirect yet
+        setShowMagicLinkSent(true)
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -138,6 +137,57 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
       toast({
         title: "Authentication error",
         description: error.message || "Authentication failed. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Handle magic link auth
+  const handleMagicLinkAuth = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    try {
+      emailSchema.parse(email)
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        setErrors({ email: error.errors[0].message })
+        return
+      }
+    }
+
+    setIsLoading(true)
+    setErrors({})
+
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?redirectTo=${redirectTo}`,
+        },
+      })
+
+      if (error) throw error
+
+      setShowMagicLinkSent(true)
+      toast({
+        title: "Magic link sent",
+        description: "Check your email for a sign in link",
+        duration: 5000,
+      })
+
+      // No router.refresh() needed here as we're just showing a confirmation message
+      // The actual auth will happen when they click the magic link in their email
+    } catch (error: any) {
+      console.error("Magic link error:", error)
+      setErrors({
+        general: error.message || "Failed to send magic link. Please try again.",
+      })
+
+      toast({
+        title: "Authentication error",
+        description: error.message || "Failed to send magic link. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -177,6 +227,37 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
     }
   }
 
+  // Magic link sent confirmation view
+  if (showMagicLinkSent) {
+    return (
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Check your email</CardTitle>
+            <CardDescription>
+              We've sent a magic link to <strong>{email}</strong>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+              Click the link in your email to sign in. If you don't see it, check your spam folder.
+            </p>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                setShowMagicLinkSent(false)
+                setEmail("")
+              }}
+            >
+              Use a different email
+            </Button>
+          </CardContent>
+        </Card>
+      </motion.div>
+    )
+  }
+
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
       <Card className="w-full max-w-md">
@@ -185,10 +266,11 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
           <CardDescription>Sign in or create an account to get started</CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "signin" | "signup")}>
-            <TabsList className="grid w-full grid-cols-2 mb-6">
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "signin" | "signup" | "magic")}>
+            <TabsList className="grid w-full grid-cols-3 mb-6">
               <TabsTrigger value="signin">Sign In</TabsTrigger>
               <TabsTrigger value="signup">Sign Up</TabsTrigger>
+              <TabsTrigger value="magic">Magic Link</TabsTrigger>
             </TabsList>
 
             <AnimatePresence mode="wait">
@@ -200,13 +282,7 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
                 transition={{ duration: 0.2 }}
               >
                 {errors.general && (
-                  <div
-                    className={`mb-4 p-3 ${
-                      errors.general.includes("verify")
-                        ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400"
-                        : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400"
-                    } rounded-md text-sm`}
-                  >
+                  <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-md text-sm">
                     {errors.general}
                   </div>
                 )}
@@ -310,6 +386,38 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
                         "Create Account"
                       )}
                     </Button>
+                  </form>
+                )}
+
+                {activeTab === "magic" && (
+                  <form onSubmit={handleMagicLinkAuth} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="email-magic">Email</Label>
+                      <Input
+                        id="email-magic"
+                        type="email"
+                        placeholder="m@example.com"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        disabled={isLoading}
+                        className={errors.email ? "border-red-500 focus-visible:ring-red-500" : ""}
+                        required
+                      />
+                      {errors.email && <p className="text-xs text-red-500">{errors.email}</p>}
+                    </div>
+                    <Button type="submit" className="w-full" disabled={isLoading}>
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        "Send Magic Link"
+                      )}
+                    </Button>
+                    <p className="text-xs text-center text-gray-500 dark:text-gray-400">
+                      We'll email you a magic link for a password-free sign in.
+                    </p>
                   </form>
                 )}
               </motion.div>
