@@ -3,11 +3,8 @@
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { revalidatePath } from "next/cache"
-import { ensureUserInDb as _ensureUserInDb } from "./user-actions"
+import { ensureUserInDb } from "./user-actions"
 import { cleanupAuthTokens } from "@/lib/utils/auth-cleanup"
-
-// Re-export for backward compatibility
-export { ensureUserInDb } from "./user-actions"
 
 // Helper function to get the site URL based on environment
 function getSiteUrl() {
@@ -42,7 +39,7 @@ export async function signIn(formData: FormData) {
   // Ensure user exists in database immediately after sign in
   if (data.user) {
     console.log("Sign In - Creating user in database immediately after sign in")
-    await _ensureUserInDb(data.user.id, data.user.email || "")
+    await ensureUserInDb(data.user.id, data.user.email || "")
   }
 
   revalidatePath("/", "layout")
@@ -79,7 +76,7 @@ export async function signUp(formData: FormData) {
   } else if (data.user && data.session) {
     // User was auto-confirmed, create in database
     console.log("Sign Up - Creating user in database immediately after auto-confirmed sign up")
-    await _ensureUserInDb(data.user.id, data.user.email || "")
+    await ensureUserInDb(data.user.id, data.user.email || "")
     revalidatePath("/", "layout")
     redirect(redirectTo)
   }

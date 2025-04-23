@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation"
 type SupabaseContext = {
   supabase: SupabaseClient<Database>
   user: User | null
+  isLoading: boolean
 }
 
 const Context = createContext<SupabaseContext | undefined>(undefined)
@@ -23,6 +24,7 @@ export default function SupabaseProvider({
 }) {
   const [supabase] = useState(() => createClient())
   const [user, setUser] = useState<User | null>(initialUser)
+  const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
 
   useEffect(() => {
@@ -36,13 +38,12 @@ export default function SupabaseProvider({
         fetch("/api/auth/signout", {
           method: "POST",
           credentials: "include",
+        }).finally(() => {
+          // Reset user state
+          setUser(null)
+          // Force a hard navigation to the home page
+          window.location.href = "/"
         })
-
-        // Reset user state
-        setUser(null)
-
-        // Refresh the page to ensure clean state
-        router.refresh()
       } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
         setUser(session?.user ?? null)
         router.refresh()
@@ -53,8 +54,9 @@ export default function SupabaseProvider({
 
     // Handle initial session error gracefully
     const checkSession = async () => {
+      setIsLoading(true)
       try {
-        const { data, error } = await supabase.auth.getSession()
+        const { data, error } = await supabase.auth.getUser()
         if (error) {
           console.warn("Session check error (handled gracefully):", error.message)
 
@@ -64,9 +66,14 @@ export default function SupabaseProvider({
             await supabase.auth.signOut()
             setUser(null)
           }
+        } else {
+          setUser(data.user)
         }
       } catch (err) {
         console.warn("Unexpected session check error:", err)
+        setUser(null)
+      } finally {
+        setIsLoading(false)
       }
     }
 
@@ -77,7 +84,7 @@ export default function SupabaseProvider({
     }
   }, [supabase, router])
 
-  return <Context.Provider value={{ supabase, user }}>{children}</Context.Provider>
+  return <Context.Provider value={{ supabase, user, isLoading }}>{children}</Context.Provider>
 }
 
 export const useSupabase = () => {

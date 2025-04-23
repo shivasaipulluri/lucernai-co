@@ -10,16 +10,16 @@ export async function cleanupAuthTokens() {
     "supabase-auth-token",
     "__session",
     "sb-provider-token",
+    "sb:token",
+    "sb-provider-token",
+    "sb-refresh-token-nonce",
   ]
 
   for (const cookieName of possibleAuthCookies) {
     try {
-      cookieStore.delete(cookieName)
-      console.log(`Auth cleanup: Deleted cookie ${cookieName}`)
+      cookieStore.delete({ name: cookieName, path: "/" })
     } catch (e) {
       // Ignore errors if cookie doesn't exist
     }
   }
-
-  return { success: true }
 }

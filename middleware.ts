@@ -27,7 +27,8 @@ export async function middleware(request: NextRequest) {
     request.nextUrl.pathname === "/" ||
     request.nextUrl.pathname.startsWith("/auth") ||
     request.nextUrl.pathname.startsWith("/_next") ||
-    request.nextUrl.pathname.startsWith("/favicon.ico")
+    request.nextUrl.pathname.startsWith("/favicon.ico") ||
+    request.nextUrl.pathname.startsWith("/api/auth/signout")
   ) {
     console.log("Middleware: Skipping auth check for public route:", request.nextUrl.pathname)
     return response
@@ -58,39 +59,34 @@ export async function middleware(request: NextRequest) {
       },
     )
 
-    // Use getSession for middleware to avoid unnecessary API calls
-    // We're just checking if the user is logged in, not using the user data for security-critical operations
+    // Use getUser instead of getSession for better security
     const {
-      data: { session },
+      data: { user },
       error,
-    } = await supabase.auth.getSession()
+    } = await supabase.auth.getUser()
 
-    // Handle auth errors gracefully
     if (error) {
-      console.warn("Middleware auth error:", error.message)
-
-      // If there's a refresh token error, redirect to auth page
-      if (error.message.includes("Refresh Token Not Found")) {
-        console.log("Middleware: Invalid refresh token, redirecting to auth page")
-        const redirectUrl = new URL("/auth", request.url)
-        return NextResponse.redirect(redirectUrl)
-      }
-    }
-
-    // If no session and trying to access a protected route
-    if (!session) {
-      console.log("Middleware: No session, redirecting to auth page from:", request.nextUrl.pathname)
+      console.error("Middleware: Auth error:", error.message)
+      // Redirect to auth page on auth errors
       const redirectUrl = new URL("/auth", request.url)
       redirectUrl.searchParams.set("redirectTo", request.nextUrl.pathname)
       return NextResponse.redirect(redirectUrl)
     }
 
-    console.log("Middleware: Session found, allowing access to:", request.nextUrl.pathname)
+    // If no user and trying to access a protected route
+    if (!user) {
+      console.log("Middleware: No authenticated user, redirecting to auth page from:", request.nextUrl.pathname)
+      const redirectUrl = new URL("/auth", request.url)
+      redirectUrl.searchParams.set("redirectTo", request.nextUrl.pathname)
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    console.log("Middleware: Authenticated user found, allowing access to:", request.nextUrl.pathname)
 
     // Add a custom header to indicate that the user should be created
     // This will be picked up by the layout or page components
     if (
-      session &&
+      user &&
       (request.nextUrl.pathname === "/resume/lab" ||
         request.nextUrl.pathname === "/dashboard" ||
         request.nextUrl.pathname.startsWith("/resume/"))
@@ -98,13 +94,21 @@ export async function middleware(request: NextRequest) {
       console.log("Middleware: Adding create-user header for protected page")
       // Add user info to headers for server components to handle user creation
       response.headers.set("x-create-user", "true")
-      response.headers.set("x-user-id", session.user.id)
-      response.headers.set("x-user-email", session.user.email || "")
+      response.headers.set("x-user-id", user.id)
+      response.headers.set("x-user-email", user.email || "")
     }
   } catch (error) {
     console.error("Error in middleware:", error)
-    // On error, allow the request to proceed to avoid blocking legitimate requests
+    // On error, redirect to auth page
+    const redirectUrl = new URL("/auth", request.url)
+    return NextResponse.redirect(redirectUrl)
   }
+
+  // Set cache control headers to prevent caching
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+  response.headers.set("Pragma", "no-cache")
+  response.headers.set("Expires", "0")
+  response.headers.set("Surrogate-Control", "no-store")
 
   return response
 }

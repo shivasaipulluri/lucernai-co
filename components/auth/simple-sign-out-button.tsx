@@ -14,6 +14,11 @@ export function SimpleSignOutButton({ variant = "ghost", size = "sm", className 
     // Clear cookies immediately
     document.cookie = "sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;"
     document.cookie = "sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;"
+    document.cookie = "supabase-auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;"
+    document.cookie = "__session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;"
+    document.cookie = "sb-provider-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;"
+    document.cookie = "sb:token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;"
+    document.cookie = "sb-refresh-token-nonce=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;"
 
     // Force navigation to home page
     window.location.href = "/"

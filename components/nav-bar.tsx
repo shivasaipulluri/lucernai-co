@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
 import { Menu, User, FileText, Clock, RotateCw } from "lucide-react"
 import {
@@ -18,8 +18,9 @@ import { SimpleSignOutButton } from "@/components/auth/simple-sign-out-button"
 
 export function NavBar() {
   const pathname = usePathname()
+  const router = useRouter()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const { user } = useSupabase()
+  const { user, isLoading } = useSupabase()
   const [isLoggedIn, setIsLoggedIn] = useState(false)
 
   // Update isLoggedIn state when user changes
@@ -30,6 +31,24 @@ export function NavBar() {
   // Don't show nav bar on auth pages
   if (pathname.startsWith("/auth")) {
     return null
+  }
+
+  // Don't show protected navigation items while loading auth state
+  if (isLoading) {
+    return (
+      <header className="border-b bg-white">
+        <div className="container-wide flex h-16 items-center justify-between">
+          <div className="flex items-center">
+            <Link href="/" className="flex items-center">
+              <span className="text-xl font-bold text-primary">
+                lucernai<span className="text-accent">.</span>
+              </span>
+            </Link>
+          </div>
+          <div className="animate-pulse bg-gray-200 h-8 w-32 rounded"></div>
+        </div>
+      </header>
+    )
   }
 
   const isActive = (path: string) => pathname === path
