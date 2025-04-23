@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma"
 import { redirect } from "next/navigation"
 import { ProfileClient } from "@/components/profile/profile-client"
 import { getTemplateById, getDefaultTemplate } from "@/lib/templates/resume-templates"
+import { ensureUserInDb } from "@/lib/actions/user-actions"
 
 export const metadata = {
   title: "Profile | Lucerna AI",
@@ -34,6 +35,9 @@ async function getUserProfile() {
 
     console.log("Profile page - User authenticated:", user.id)
 
+    // Ensure user exists in database before proceeding
+    await ensureUserInDb(user.id, user.email || "")
+
     // Get user data from Prisma with optimized query
     // Only select the fields we need and use a single query
     const [userData, recentExport] = await Promise.all([
@@ -41,8 +45,12 @@ async function getUserProfile() {
         where: { id: user.id },
         select: {
           email: true,
+          fullName: true, // Make sure to include fullName
           isPremium: true,
           resumeTemplate: true,
+          preferredTailoringMode: true,
+          analyticsTimeRange: true,
+          analyticsViewMode: true,
           dailyBasicTailoringsUsed: true,
           dailyPersonalizedTailoringsUsed: true,
           dailyAggressiveTailoringsUsed: true,
@@ -68,76 +76,13 @@ async function getUserProfile() {
       }),
     ])
 
-    // If user doesn't exist in database, create them
+    // If user doesn't exist in database, this should never happen now
     if (!userData) {
-      console.log("Profile page - Creating new user record for:", user.id)
-
-      try {
-        const newUser = await prisma.user.create({
-          data: {
-            id: user.id,
-            email: user.email || "",
-            isPremium: false,
-            dailyBasicTailoringsUsed: 0,
-            dailyPersonalizedTailoringsUsed: 0,
-            dailyAggressiveTailoringsUsed: 0,
-            dailyCoverLettersUsed: 0,
-            dailyLinkedinOptimizationsUsed: 0,
-            dailyInterviewSessionsUsed: 0,
-            dailyResetDate: new Date(),
-          },
-        })
-
-        const userData = {
-          email: newUser.email,
-          isPremium: newUser.isPremium,
-          resumeTemplate: newUser.resumeTemplate,
-          dailyBasicTailoringsUsed: newUser.dailyBasicTailoringsUsed,
-          dailyPersonalizedTailoringsUsed: newUser.dailyPersonalizedTailoringsUsed,
-          dailyAggressiveTailoringsUsed: newUser.dailyAggressiveTailoringsUsed,
-          dailyCoverLettersUsed: newUser.dailyCoverLettersUsed,
-          dailyLinkedinOptimizationsUsed: newUser.dailyLinkedinOptimizationsUsed,
-          dailyInterviewSessionsUsed: newUser.dailyInterviewSessionsUsed,
-          dailyResetDate: newUser.dailyResetDate,
-          createdAt: newUser.createdAt,
-        }
-
-        console.log("Profile page - User record created successfully")
-
-        // Get the template information
-        const templateId = userData.resumeTemplate || getDefaultTemplate().id
-        const template = getTemplateById(templateId)
-
-        const loadTime = Date.now() - startTime
-        console.log(`Profile page - Data loaded in ${loadTime}ms`)
-
-        return {
-          success: true,
-          data: {
-            id: user.id,
-            email: userData.email,
-            isPremium: userData.isPremium,
-            template: template || getDefaultTemplate(),
-            usage: {
-              basicTailorings: userData.dailyBasicTailoringsUsed,
-              personalizedTailorings: userData.dailyPersonalizedTailoringsUsed,
-              aggressiveTailorings: userData.dailyAggressiveTailoringsUsed,
-              coverLetters: userData.dailyCoverLettersUsed,
-              linkedinOptimizations: userData.dailyLinkedinOptimizationsUsed,
-              interviewSessions: userData.dailyInterviewSessionsUsed,
-              resetDate: userData.dailyResetDate,
-            },
-            recentExport: recentExport,
-            createdAt: userData.createdAt,
-          },
-        }
-      } catch (createError) {
-        console.error("Profile page - Failed to create user record:", createError)
-        return {
-          success: false,
-          error: "Failed to create user record in database",
-          authError: false,
-        }
+      console.error("Profile page - User not found in database after ensureUserInDb:", user.id)
+      return {
+        success: false,
+        error: "User not found in database",
+        authError: false,
       }
     }
 
@@ -153,7 +98,11 @@ async function getUserProfile() {
       data: {
         id: user.id,
         email: userData.email,
+        fullName: userData.fullName, // Make sure to include fullName
         isPremium: userData.isPremium,
+        preferredTailoringMode: userData.preferredTailoringMode,
+        analyticsTimeRange: userData.analyticsTimeRange,
+        analyticsViewMode: userData.analyticsViewMode,
         template: template || getDefaultTemplate(),
         usage: {
           basicTailorings: userData.dailyBasicTailoringsUsed,
@@ -178,9 +127,12 @@ export default async function ProfilePage() {
   console.log("Profile page - Component rendering")
 
   return (
-    <div className="container mx-auto py-10">
-      <ProfilePageContent />
-    </div>
+    <>
+      {/* Loading state */}
+      <div className="container mx-auto py-10">
+        <ProfilePageContent />
+      </div>
+    </>
   )
 }
 
@@ -199,7 +151,7 @@ async function ProfilePageContent() {
     // For other errors, show an error state
     console.log("Profile page - Showing error state:", result.error)
     return (
-      <>
+      <div className="container mx-auto py-10">
         <h1 className="text-2xl font-bold mb-4">Profile Error</h1>
         <p className="text-red-500">There was an error loading your profile: {result.error}</p>
         <div className="mt-4">
@@ -207,7 +159,7 @@ async function ProfilePageContent() {
             Return to Resume Lab
           </a>
         </div>
-      </>
+      </div>
     )
   }
 

@@ -1,30 +1,25 @@
 "use client"
 
+import { createClient } from "@/lib/supabase/client"
+
 /**
- * Utility function to clear auth state on the client side
+ * Utility function to get the current user from the client
  */
-export async function clearClientAuthState() {
-  try {
-    // Clear any auth cookies that might be stored
-    document.cookie.split(";").forEach((cookie) => {
-      const [name] = cookie.trim().split("=")
-      if (name.includes("sb-") || name.includes("supabase") || name.includes("auth")) {
-        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`
-      }
-    })
+export async function getCurrentUser() {
+  const supabase = createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  return user
+}
 
-    // Clear localStorage items related to auth
-    const authItems = ["supabase.auth.token", "supabase-auth-token", "sb-auth-token"]
-    authItems.forEach((item) => {
-      try {
-        localStorage.removeItem(item)
-      } catch (e) {
-        // Ignore errors
-      }
-    })
-
-    console.log("Client auth state cleared")
-  } catch (error) {
-    console.error("Error clearing client auth state:", error)
-  }
+/**
+ * Utility function to check if a user is authenticated on the client
+ */
+export async function isAuthenticated() {
+  const supabase = createClient()
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  return !!session
 }

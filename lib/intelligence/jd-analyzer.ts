@@ -99,7 +99,7 @@ Ensure the output is valid JSON that can be parsed directly.
       },
       {
         retries: 2,
-        delay: 1000,
+        delay: 100,
         onRetry: (error) => {
           console.warn(`Retry attempt for JD analysis due to: ${error.message}`)
         },

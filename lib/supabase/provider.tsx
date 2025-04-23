@@ -1,15 +1,14 @@
 "use client"
 
 import type React from "react"
-
-import { createContext, useContext, useState, useEffect } from "react"
-import { createBrowserClient } from "@supabase/ssr"
+import { createContext, useContext, useEffect, useState } from "react"
+import { createClient } from "@/lib/supabase/client"
+import type { SupabaseClient, User } from "@supabase/supabase-js"
+import type { Database } from "@/lib/supabase/database.types"
 import { useRouter } from "next/navigation"
-import type { Database } from "./database.types"
-import type { User, Session } from "@supabase/auth-helpers-nextjs"
 
 type SupabaseContext = {
-  supabase: ReturnType<typeof createBrowserClient<Database>>
+  supabase: SupabaseClient<Database>
   user: User | null
 }
 
@@ -22,25 +21,61 @@ export default function SupabaseProvider({
   children: React.ReactNode
   initialUser: User | null
 }) {
+  const [supabase] = useState(() => createClient())
   const [user, setUser] = useState<User | null>(initialUser)
   const router = useRouter()
-  const supabase = createBrowserClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
 
   useEffect(() => {
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event: string, session: Session | null) => {
-      setUser(session?.user || null)
-      router.refresh()
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("Auth state change event:", event)
+
+      if (event === "SIGNED_OUT") {
+        // Delete any server-side cookies
+        fetch("/api/auth/signout", {
+          method: "POST",
+          credentials: "include",
+        })
+
+        // Reset user state
+        setUser(null)
+
+        // Refresh the page to ensure clean state
+        router.refresh()
+      } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        setUser(session?.user ?? null)
+        router.refresh()
+      } else if (event === "USER_UPDATED") {
+        setUser(session?.user ?? null)
+      }
     })
+
+    // Handle initial session error gracefully
+    const checkSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession()
+        if (error) {
+          console.warn("Session check error (handled gracefully):", error.message)
+
+          // If there's a refresh token error, clear the session
+          if (error.message.includes("Refresh Token Not Found")) {
+            console.log("Clearing invalid session")
+            await supabase.auth.signOut()
+            setUser(null)
+          }
+        }
+      } catch (err) {
+        console.warn("Unexpected session check error:", err)
+      }
+    }
+
+    checkSession()
 
     return () => {
       subscription.unsubscribe()
     }
-  }, [router, supabase])
+  }, [supabase, router])
 
   return <Context.Provider value={{ supabase, user }}>{children}</Context.Provider>
 }

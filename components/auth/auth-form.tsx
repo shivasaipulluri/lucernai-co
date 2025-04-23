@@ -1,22 +1,21 @@
 "use client"
 
-import Link from "next/link"
-
 import type React from "react"
 
 import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useToast } from "@/components/ui/use-toast"
+import { Loader2 } from "lucide-react"
 import { FcGoogle } from "react-icons/fc"
 import { createClient } from "@/lib/supabase/client"
-import { z } from "zod"
-import { Loader2 } from "lucide-react"
+import { useToast } from "@/components/ui/use-toast"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { motion, AnimatePresence } from "framer-motion"
+import { z } from "zod"
 
 // Form validation schemas
 const emailSchema = z.string().email("Please enter a valid email address")
@@ -33,12 +32,16 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [resendingEmail, setResendingEmail] = useState(false)
   const [activeTab, setActiveTab] = useState<"signin" | "signup">(isSignUp ? "signup" : "signin")
-  const [errors, setErrors] = useState<{
+  const [formError, setFormError] = useState<string | null>(null)
+  const [formSuccess, setFormSuccess] = useState<string | null>(null)
+  const [isEmailUnconfirmed, setIsEmailUnconfirmed] = useState(false)
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState("")
+  const [fieldErrors, setFieldErrors] = useState<{
     email?: string
     password?: string
     confirmPassword?: string
-    general?: string
   }>({})
 
   // Hooks
@@ -47,20 +50,42 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
   const { toast } = useToast()
   const supabase = createClient()
 
-  // Set active tab based on URL param
+  // Check for error in URL
   useEffect(() => {
-    setActiveTab(isSignUp ? "signup" : "signin")
-  }, [isSignUp])
+    const error = searchParams.get("error")
+    const errorCode = searchParams.get("error_code")
+    const errorDescription = searchParams.get("error_description")
+
+    if (error) {
+      let errorMessage = decodeURIComponent(errorDescription || error)
+
+      // Handle specific error codes
+      if (errorCode === "otp_expired") {
+        errorMessage = "Your email confirmation link has expired. Please request a new one below."
+        setActiveTab("signin")
+        setIsEmailUnconfirmed(true)
+      }
+
+      setFormError(errorMessage)
+      toast({
+        title: "Authentication Error",
+        description: errorMessage,
+        variant: "destructive",
+      })
+    }
+  }, [searchParams, toast])
 
   // Form validation
   const validateForm = () => {
-    const newErrors: typeof errors = {}
+    const errors: typeof fieldErrors = {}
+    let isValid = true
 
     try {
       emailSchema.parse(email)
     } catch (error) {
       if (error instanceof z.ZodError) {
-        newErrors.email = error.errors[0].message
+        errors.email = error.errors[0].message
+        isValid = false
       }
     }
 
@@ -68,26 +93,40 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
       passwordSchema.parse(password)
     } catch (error) {
       if (error instanceof z.ZodError) {
-        newErrors.password = error.errors[0].message
+        errors.password = error.errors[0].message
+        isValid = false
       }
     }
 
     if (activeTab === "signup" && password !== confirmPassword) {
-      newErrors.confirmPassword = "Passwords do not match"
+      errors.confirmPassword = "Passwords do not match"
+      isValid = false
     }
 
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
+    setFieldErrors(errors)
+    return isValid
+  }
+
+  // Reset form fields
+  const resetForm = () => {
+    setEmail("")
+    setPassword("")
+    setConfirmPassword("")
+    setFieldErrors({})
   }
 
   // Handle email/password auth
   const handleEmailPasswordAuth = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    // Reset errors and success messages
+    setFormError(null)
+    setFormSuccess(null)
+    setIsEmailUnconfirmed(false)
+
     if (!validateForm()) return
 
     setIsLoading(true)
-    setErrors({})
 
     try {
       if (activeTab === "signup") {
@@ -101,15 +140,18 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
 
         if (error) throw error
 
+        // Show success message
+        setFormSuccess("Verification email sent! Please check your inbox to complete registration.")
+        setUnconfirmedEmail(email)
+
+        // Switch to sign in tab and reset form
+        setActiveTab("signin")
+        resetForm()
+
         toast({
           title: "Verification email sent",
           description: "Please check your email to verify your account",
           duration: 5000,
-        })
-
-        // Show confirmation message
-        setErrors({
-          general: "Please check your email to verify your account. You can close this page.",
         })
       } else {
         const { error } = await supabase.auth.signInWithPassword({
@@ -117,7 +159,17 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
           password,
         })
 
-        if (error) throw error
+        if (error) {
+          // Check for unconfirmed email error
+          if (error.message.includes("Email not confirmed")) {
+            setIsEmailUnconfirmed(true)
+            setUnconfirmedEmail(email)
+            throw new Error(
+              "Email not confirmed. Please check your inbox for the verification email or request a new one.",
+            )
+          }
+          throw error
+        }
 
         toast({
           title: "Signed in successfully",
@@ -125,15 +177,12 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
           duration: 3000,
         })
 
-        // Add router.refresh() before router.push to ensure session state is updated
         router.refresh()
         router.push(redirectTo)
       }
     } catch (error: any) {
       console.error("Authentication error:", error)
-      setErrors({
-        general: error.message || "Authentication failed. Please try again.",
-      })
+      setFormError(error.message || "Authentication failed. Please try again.")
 
       toast({
         title: "Authentication error",
@@ -145,10 +194,55 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
     }
   }
 
+  // Handle resending confirmation email
+  const handleResendConfirmation = async () => {
+    setResendingEmail(true)
+    setFormError(null)
+    setFormSuccess(null)
+
+    try {
+      const emailToUse = unconfirmedEmail || email
+
+      if (!emailToUse) {
+        throw new Error("Please enter your email address")
+      }
+
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: emailToUse,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?redirectTo=${redirectTo}`,
+        },
+      })
+
+      if (error) throw error
+
+      setFormSuccess(`Verification email resent to ${emailToUse}. Please check your inbox.`)
+
+      toast({
+        title: "Verification email resent",
+        description: "Please check your inbox to verify your account",
+        duration: 5000,
+      })
+    } catch (error: any) {
+      console.error("Error resending confirmation email:", error)
+      setFormError(error.message || "Failed to resend verification email. Please try again.")
+
+      toast({
+        title: "Error",
+        description: error.message || "Failed to resend verification email. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setResendingEmail(false)
+    }
+  }
+
   // Handle Google auth
   const handleGoogleAuth = async () => {
     setIsLoading(true)
-    setErrors({})
+    setFormError(null)
+    setFormSuccess(null)
 
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -159,14 +253,9 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
       })
 
       if (error) throw error
-
-      // No need for router.refresh() here as the OAuth flow will handle the redirect
-      // and the callback route will handle the session update
     } catch (error: any) {
       console.error("Google auth error:", error)
-      setErrors({
-        general: error.message || "Failed to sign in with Google. Please try again.",
-      })
+      setFormError(error.message || "Failed to sign in with Google. Please try again.")
 
       toast({
         title: "Authentication error",
@@ -177,6 +266,15 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
     }
   }
 
+  // Handle tab change
+  const handleTabChange = (value: string) => {
+    setActiveTab(value as "signin" | "signup")
+    setFormError(null)
+    setFormSuccess(null)
+    setIsEmailUnconfirmed(false)
+    resetForm()
+  }
+
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
       <Card className="w-full max-w-md">
@@ -185,7 +283,7 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
           <CardDescription>Sign in or create an account to get started</CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "signin" | "signup")}>
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList className="grid w-full grid-cols-2 mb-6">
               <TabsTrigger value="signin">Sign In</TabsTrigger>
               <TabsTrigger value="signup">Sign Up</TabsTrigger>
@@ -199,15 +297,40 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
                 exit={{ opacity: 0, x: -10 }}
                 transition={{ duration: 0.2 }}
               >
-                {errors.general && (
-                  <div
-                    className={`mb-4 p-3 ${
-                      errors.general.includes("verify")
-                        ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400"
-                        : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400"
-                    } rounded-md text-sm`}
-                  >
-                    {errors.general}
+                {formError && (
+                  <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-md text-sm">
+                    {formError}
+                  </div>
+                )}
+
+                {formSuccess && (
+                  <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-md text-sm">
+                    {formSuccess}
+                  </div>
+                )}
+
+                {isEmailUnconfirmed && (
+                  <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+                    <h4 className="font-medium text-yellow-800 dark:text-yellow-300 mb-2">Email not confirmed</h4>
+                    <p className="text-sm text-yellow-700 dark:text-yellow-400 mb-3">
+                      Please check your inbox for the verification email or request a new one.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleResendConfirmation}
+                      disabled={resendingEmail}
+                      className="w-full"
+                    >
+                      {resendingEmail ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Resending...
+                        </>
+                      ) : (
+                        "Resend verification email"
+                      )}
+                    </Button>
                   </div>
                 )}
 
@@ -222,17 +345,17 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         disabled={isLoading}
-                        className={errors.email ? "border-red-500 focus-visible:ring-red-500" : ""}
+                        className={fieldErrors.email ? "border-red-500 focus-visible:ring-red-500" : ""}
                         required
                       />
-                      {errors.email && <p className="text-xs text-red-500">{errors.email}</p>}
+                      {fieldErrors.email && <p className="text-xs text-red-500">{fieldErrors.email}</p>}
                     </div>
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
                         <Label htmlFor="password-signin">Password</Label>
-                        <a href="/auth/reset-password" className="text-xs text-primary hover:underline">
+                        <Link href="/auth/reset-password" className="text-xs text-primary hover:underline">
                           Forgot password?
-                        </a>
+                        </Link>
                       </div>
                       <Input
                         id="password-signin"
@@ -240,10 +363,10 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         disabled={isLoading}
-                        className={errors.password ? "border-red-500 focus-visible:ring-red-500" : ""}
+                        className={fieldErrors.password ? "border-red-500 focus-visible:ring-red-500" : ""}
                         required
                       />
-                      {errors.password && <p className="text-xs text-red-500">{errors.password}</p>}
+                      {fieldErrors.password && <p className="text-xs text-red-500">{fieldErrors.password}</p>}
                     </div>
                     <Button type="submit" className="w-full" disabled={isLoading}>
                       {isLoading ? (
@@ -269,10 +392,10 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         disabled={isLoading}
-                        className={errors.email ? "border-red-500 focus-visible:ring-red-500" : ""}
+                        className={fieldErrors.email ? "border-red-500 focus-visible:ring-red-500" : ""}
                         required
                       />
-                      {errors.email && <p className="text-xs text-red-500">{errors.email}</p>}
+                      {fieldErrors.email && <p className="text-xs text-red-500">{fieldErrors.email}</p>}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="password-signup">Password</Label>
@@ -282,10 +405,10 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         disabled={isLoading}
-                        className={errors.password ? "border-red-500 focus-visible:ring-red-500" : ""}
+                        className={fieldErrors.password ? "border-red-500 focus-visible:ring-red-500" : ""}
                         required
                       />
-                      {errors.password && <p className="text-xs text-red-500">{errors.password}</p>}
+                      {fieldErrors.password && <p className="text-xs text-red-500">{fieldErrors.password}</p>}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="confirm-password">Confirm Password</Label>
@@ -295,10 +418,12 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         disabled={isLoading}
-                        className={errors.confirmPassword ? "border-red-500 focus-visible:ring-red-500" : ""}
+                        className={fieldErrors.confirmPassword ? "border-red-500 focus-visible:ring-red-500" : ""}
                         required
                       />
-                      {errors.confirmPassword && <p className="text-xs text-red-500">{errors.confirmPassword}</p>}
+                      {fieldErrors.confirmPassword && (
+                        <p className="text-xs text-red-500">{fieldErrors.confirmPassword}</p>
+                      )}
                     </div>
                     <Button type="submit" className="w-full" disabled={isLoading}>
                       {isLoading ? (
@@ -333,12 +458,13 @@ export function AuthForm({ redirectTo, isSignUp = false }: AuthFormProps) {
 
             <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
               {activeTab === "signin" ? "Don't have an account? " : "Already have an account? "}
-              <Link
-                href={activeTab === "signin" ? "/auth?signup=true" : "/auth"}
+              <button
+                type="button"
                 className="text-primary hover:underline"
+                onClick={() => handleTabChange(activeTab === "signin" ? "signup" : "signin")}
               >
                 {activeTab === "signin" ? "Sign up" : "Sign in"}
-              </Link>
+              </button>
             </p>
           </Tabs>
         </CardContent>

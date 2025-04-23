@@ -109,7 +109,7 @@ export function SessionSecurityCard({ profile }: SessionSecurityCardProps) {
           <div className="space-y-2">
             <h3 className="text-sm font-medium">Data Storage</h3>
             <p className="text-sm text-gray-600">
-              Your resumes, cover letters, and other content are stored securely in your Supabase database. We do not
+              Your resumes, cover letters, and other content are stored securely in our database. We do not
               share your data with third parties.
             </p>
           </div>
@@ -117,7 +117,7 @@ export function SessionSecurityCard({ profile }: SessionSecurityCardProps) {
           <div className="space-y-2">
             <h3 className="text-sm font-medium">AI Processing</h3>
             <p className="text-sm text-gray-600">
-              Lucerna AI uses Google Gemini and Mistral AI to process your content. Your data is not stored by these
+              Lucerna AI uses Different AI Models to process your content. Your data is not stored by these
               services after processing is complete.
             </p>
           </div>

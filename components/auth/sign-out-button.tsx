@@ -3,8 +3,7 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { LogOut, Loader2 } from "lucide-react"
-import { signOut } from "@/lib/actions/auth-actions"
-import { useToast } from "@/hooks/use-toast"
+import { useToast } from "@/components/ui/use-toast"
 
 interface SignOutButtonProps {
   variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link"
@@ -18,34 +17,44 @@ export function SignOutButton({ variant = "ghost", size = "sm", className = "" }
 
   const handleSignOut = async () => {
     setIsLoading(true)
-    console.log("SignOutButton: Sign out initiated")
 
     try {
-      // Show toast before redirecting
+      // Show toast first
       toast({
         title: "Signing out",
         description: "You are being signed out...",
       })
 
-      // Use the server action directly - this should trigger the redirect
-      await signOut()
+      // Clear any auth-related cookies manually first
+      document.cookie = "sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;"
+      document.cookie = "sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;"
 
-      // If we somehow get here (we shouldn't because of the redirect),
-      // force a hard refresh to the home page using the current origin
-      console.log("SignOutButton: Server action completed without redirect, forcing navigation")
-      window.location.href = "/"
+      // Call the sign-out API route
+      fetch("/api/auth/signout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }).catch((err) => {
+        console.error("Error calling signout API:", err)
+      })
+
+      // Force immediate navigation to home page
+      console.log("Redirecting to home page...")
+
+      // Use setTimeout to ensure this runs after the current execution context
+      setTimeout(() => {
+        window.location.replace("/")
+      }, 100)
     } catch (error) {
-      console.error("SignOutButton: Error signing out:", error)
+      console.error("Error signing out:", error)
       setIsLoading(false)
 
       toast({
-        title: "You are Leaving Me",
-        description: "I Miss You Here..! (From Lucerna)",
+        title: "Error",
+        description: "There was a problem signing out. Please try again.",
         variant: "destructive",
       })
-
-      // Even if there's an error, try to redirect to home
-      window.location.href = "/"
     }
   }
 

@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { usePathname } from "next/navigation"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Menu, User, FileText, Clock, RotateCw } from "lucide-react"
 import {
   DropdownMenu,
@@ -14,13 +14,23 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useSupabase } from "@/lib/supabase/provider"
-import { SignOutButton } from "@/components/auth/sign-out-button"
+import { SimpleSignOutButton } from "@/components/auth/simple-sign-out-button"
 
 export function NavBar() {
   const pathname = usePathname()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const { user } = useSupabase()
-  const isLoggedIn = !!user
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+
+  // Update isLoggedIn state when user changes
+  useEffect(() => {
+    setIsLoggedIn(!!user)
+  }, [user])
+
+  // Don't show nav bar on auth pages
+  if (pathname.startsWith("/auth")) {
+    return null
+  }
 
   const isActive = (path: string) => pathname === path
 
@@ -101,7 +111,7 @@ export function NavBar() {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem>
-                    <SignOutButton variant="ghost" size="sm" />
+                    <SimpleSignOutButton variant="ghost" size="sm" />
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -158,7 +168,7 @@ export function NavBar() {
                     <Link href="/profile">Profile</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem>
-                    <SignOutButton variant="ghost" size="sm" />
+                    <SimpleSignOutButton variant="ghost" size="sm" />
                   </DropdownMenuItem>
                 </>
               ) : (

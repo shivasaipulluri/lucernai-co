@@ -1,9 +1,91 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
-import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { cookies } from "next/headers"
+import { revalidatePath } from "next/cache"
+import { ensureUserInDb as _ensureUserInDb } from "./user-actions"
+import { cleanupAuthTokens } from "@/lib/utils/auth-cleanup"
+
+// Re-export for backward compatibility
+export { ensureUserInDb } from "./user-actions"
+
+// Helper function to get the site URL based on environment
+function getSiteUrl() {
+  // In development, use localhost
+  if (process.env.NODE_ENV === "development") {
+    return "http://localhost:3000"
+  }
+
+  // In production, use the configured site URL or default to lucernai.co
+  return process.env.NEXT_PUBLIC_SITE_URL || "https://www.lucernai.co"
+}
+
+export async function signIn(formData: FormData) {
+  const email = formData.get("email") as string
+  const password = formData.get("password") as string
+  const redirectTo = (formData.get("redirectTo") as string) || "/resume/lab"
+
+  const supabase = await createClient()
+
+  // First, ensure any stale tokens are cleared
+  await cleanupAuthTokens()
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  })
+
+  if (error) {
+    return { error: error.message }
+  }
+
+  // Ensure user exists in database immediately after sign in
+  if (data.user) {
+    console.log("Sign In - Creating user in database immediately after sign in")
+    await _ensureUserInDb(data.user.id, data.user.email || "")
+  }
+
+  revalidatePath("/", "layout")
+  redirect(redirectTo)
+}
+
+export async function signUp(formData: FormData) {
+  const email = formData.get("email") as string
+  const password = formData.get("password") as string
+  const redirectTo = (formData.get("redirectTo") as string) || "/resume/lab"
+
+  const siteUrl = getSiteUrl()
+  const supabase = await createClient()
+
+  // First, ensure any stale tokens are cleared
+  await cleanupAuthTokens()
+
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      // Explicitly use the auth/callback route
+      emailRedirectTo: `${siteUrl}/auth/callback?redirectTo=${redirectTo}`,
+    },
+  })
+
+  if (error) {
+    return { error: error.message }
+  }
+
+  // Create user in database immediately if auto-confirmed (no email verification required)
+  if (data.user && !data.session) {
+    return { success: "Check your email to confirm your account" }
+  } else if (data.user && data.session) {
+    // User was auto-confirmed, create in database
+    console.log("Sign Up - Creating user in database immediately after auto-confirmed sign up")
+    await _ensureUserInDb(data.user.id, data.user.email || "")
+    revalidatePath("/", "layout")
+    redirect(redirectTo)
+  }
+
+  return { success: "Account created successfully" }
+}
 
 export async function signOut() {
   console.log("Server action: signOut called")
@@ -21,24 +103,8 @@ export async function signOut() {
       console.log("Server action: Supabase signOut successful")
     }
 
-    // Clear all auth-related cookies manually to ensure clean state
-    const cookieStore = await cookies()
-    const possibleAuthCookies = [
-      "sb-access-token",
-      "sb-refresh-token",
-      "supabase-auth-token",
-      "__session",
-      "sb-provider-token",
-    ]
-
-    for (const cookieName of possibleAuthCookies) {
-      try {
-        cookieStore.delete(cookieName)
-        console.log(`Server action: Deleted cookie ${cookieName}`)
-      } catch (e) {
-        // Ignore errors if cookie doesn't exist
-      }
-    }
+    // Clean up auth tokens
+    await cleanupAuthTokens()
 
     // Revalidate all paths to clear any cached data
     revalidatePath("/", "layout")
@@ -52,28 +118,24 @@ export async function signOut() {
   redirect("/")
 }
 
-// Add a new function to handle profile form submissions
-export async function updateProfile(formData: FormData) {
-  // This is a placeholder for any profile update functionality
-  // It will properly handle form submissions from the profile page
+export async function signInWithGoogle(redirectTo = "/resume/lab") {
+  const siteUrl = getSiteUrl()
+  const supabase = await createClient()
 
-  try {
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+  // First, ensure any stale tokens are cleared
+  await cleanupAuthTokens()
 
-    if (!user) {
-      return { success: false, error: "Not authenticated" }
-    }
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      // Explicitly use the auth/callback route
+      redirectTo: `${siteUrl}/auth/callback?redirectTo=${redirectTo}`,
+    },
+  })
 
-    // Process form data here
-    // ...
-
-    revalidatePath("/profile")
-    return { success: true }
-  } catch (error) {
-    console.error("Error updating profile:", error)
-    return { success: false, error: "Failed to update profile" }
+  if (error) {
+    return { error: error.message }
   }
+
+  return { url: data.url }
 }

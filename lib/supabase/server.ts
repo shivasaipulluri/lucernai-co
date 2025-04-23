@@ -1,7 +1,6 @@
 import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 import type { Database } from "@/lib/supabase/database.types"
-import type { CookieOptions } from "@supabase/ssr"
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -12,22 +11,30 @@ export async function createClient() {
     {
       cookies: {
         getAll() {
-          return cookieStore.getAll()
+          return cookieStore.getAll().map((cookie) => ({
+            name: cookie.name,
+            value: cookie.value,
+          }))
         },
-        setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
-          } catch {
-            // The `setAll` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
-          }
+        setAll(cookies) {
+          cookies.forEach(({ name, value, options }) => {
+            try {
+              cookieStore.set({
+                name,
+                value,
+                ...options,
+              })
+            } catch (error) {
+              // This happens when attempting to set cookies in a Server Component
+              // We can safely ignore this error
+            }
+          })
         },
       },
       auth: {
-        detectSessionInUrl: true,
         flowType: "pkce",
         persistSession: true,
+        detectSessionInUrl: true,
         autoRefreshToken: true,
       },
     },

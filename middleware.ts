@@ -1,117 +1,123 @@
-import { NextResponse } from "next/server"
-import type { NextRequest } from "next/server"
+import { NextResponse, type NextRequest } from "next/server"
 import { createServerClient } from "@supabase/ssr"
-import type { CookieOptions } from "@supabase/ssr"
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
-  const origin = request.nextUrl.origin
+  console.log("Middleware running for path:", request.nextUrl.pathname)
 
-  // Check if this is a sign-out request
-  const isSignOutRequest = pathname === "/api/auth/signout" || request.nextUrl.searchParams.has("signout")
-
-  // Create a response object that we'll use to handle redirects
-  const response = NextResponse.next()
-
-  // Create a Supabase client specifically for this middleware request
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set(name, value, options)
-          })
-        },
-      },
-      auth: {
-        detectSessionInUrl: true,
-        flowType: "pkce",
-      },
+  // Create a response object that we can modify
+  const response = NextResponse.next({
+    request: {
+      headers: request.headers,
     },
-  )
+  })
 
-  try {
-    // If this is a sign-out request, handle it specially
-    if (isSignOutRequest) {
-      // Clear auth cookies
-      response.cookies.delete("sb-access-token")
-      response.cookies.delete("sb-refresh-token")
+  // Check if this is a root URL with a code parameter
+  const url = new URL(request.url)
+  const code = url.searchParams.get("code")
+  const isRootWithCode = url.pathname === "/" && code !== null
 
-      // Redirect to home page using the request's origin
-      return NextResponse.redirect(new URL("/", origin))
-    }
+  // If this is the root URL with a code parameter, redirect to auth callback
+  if (isRootWithCode) {
+    console.log("Middleware: Detected authentication code at root URL, redirecting to auth callback")
+    return NextResponse.redirect(new URL(`/auth/callback?code=${code}`, request.url))
+  }
 
-    // Get the user - using getUser() instead of getSession() for better security
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser()
-
-    // Auth routes handling
-    const isAuthRoute = pathname.startsWith("/auth")
-    const isCallbackRoute = pathname.startsWith("/auth/callback") || pathname.startsWith("/auth/confirm")
-
-    // If on auth page but already logged in, redirect to resume lab
-    if (isAuthRoute && !isCallbackRoute && user) {
-      return NextResponse.redirect(new URL("/resume/lab", origin))
-    }
-
-    // If on protected route but not logged in, redirect to auth page
-    const isProtectedRoute =
-      pathname.startsWith("/resume/lab") ||
-      pathname.startsWith("/saved-resumes") ||
-      pathname.startsWith("/resume-timeline") ||
-      pathname.startsWith("/profile") ||
-      pathname.startsWith("/analytics") ||
-      pathname.startsWith("/cover-letter") ||
-      pathname.startsWith("/linkedin") ||
-      pathname.startsWith("/templates") ||
-      pathname.startsWith("/interview")
-
-    if (isProtectedRoute && !user) {
-      const redirectUrl = new URL("/auth", origin)
-      redirectUrl.searchParams.set("redirectTo", pathname)
-      return NextResponse.redirect(redirectUrl)
-    }
-
-    // Redirect legacy /dashboard to /resume/lab
-    if (pathname === "/dashboard") {
-      return NextResponse.redirect(new URL("/resume/lab", origin))
-    }
-
-    return response
-  } catch (error) {
-    // Only log unexpected errors
-    console.error("Unexpected error in middleware:", error)
-
-    // If there's an error, we'll check if the user is trying to access a protected route
-    const isProtectedRoute =
-      pathname.startsWith("/resume/lab") ||
-      pathname.startsWith("/saved-resumes") ||
-      pathname.startsWith("/resume-timeline") ||
-      pathname.startsWith("/profile") ||
-      pathname.startsWith("/analytics") ||
-      pathname.startsWith("/cover-letter") ||
-      pathname.startsWith("/linkedin") ||
-      pathname.startsWith("/templates") ||
-      pathname.startsWith("/interview")
-
-    // If it's a protected route, redirect to auth
-    if (isProtectedRoute) {
-      const redirectUrl = new URL("/auth", origin)
-      redirectUrl.searchParams.set("redirectTo", pathname)
-      return NextResponse.redirect(redirectUrl)
-    }
-
+  // Don't run auth checks on public routes or auth-related routes
+  if (
+    request.nextUrl.pathname === "/" ||
+    request.nextUrl.pathname.startsWith("/auth") ||
+    request.nextUrl.pathname.startsWith("/_next") ||
+    request.nextUrl.pathname.startsWith("/favicon.ico")
+  ) {
+    console.log("Middleware: Skipping auth check for public route:", request.nextUrl.pathname)
     return response
   }
+
+  try {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return [...request.cookies.getAll()].map(({ name, value }) => ({
+              name,
+              value,
+            }))
+          },
+          setAll(cookies) {
+            cookies.forEach(({ name, value, options }) => {
+              response.cookies.set({
+                name,
+                value,
+                ...options,
+              })
+            })
+          },
+        },
+      },
+    )
+
+    // Use getSession for middleware to avoid unnecessary API calls
+    // We're just checking if the user is logged in, not using the user data for security-critical operations
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession()
+
+    // Handle auth errors gracefully
+    if (error) {
+      console.warn("Middleware auth error:", error.message)
+
+      // If there's a refresh token error, redirect to auth page
+      if (error.message.includes("Refresh Token Not Found")) {
+        console.log("Middleware: Invalid refresh token, redirecting to auth page")
+        const redirectUrl = new URL("/auth", request.url)
+        return NextResponse.redirect(redirectUrl)
+      }
+    }
+
+    // If no session and trying to access a protected route
+    if (!session) {
+      console.log("Middleware: No session, redirecting to auth page from:", request.nextUrl.pathname)
+      const redirectUrl = new URL("/auth", request.url)
+      redirectUrl.searchParams.set("redirectTo", request.nextUrl.pathname)
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    console.log("Middleware: Session found, allowing access to:", request.nextUrl.pathname)
+
+    // Add a custom header to indicate that the user should be created
+    // This will be picked up by the layout or page components
+    if (
+      session &&
+      (request.nextUrl.pathname === "/resume/lab" ||
+        request.nextUrl.pathname === "/dashboard" ||
+        request.nextUrl.pathname.startsWith("/resume/"))
+    ) {
+      console.log("Middleware: Adding create-user header for protected page")
+      // Add user info to headers for server components to handle user creation
+      response.headers.set("x-create-user", "true")
+      response.headers.set("x-user-id", session.user.id)
+      response.headers.set("x-user-email", session.user.email || "")
+    }
+  } catch (error) {
+    console.error("Error in middleware:", error)
+    // On error, allow the request to proceed to avoid blocking legitimate requests
+  }
+
+  return response
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - public (public files)
+     */
+    "/((?!_next/static|_next/image|favicon.ico|public|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 }

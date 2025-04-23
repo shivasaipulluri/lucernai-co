@@ -2,6 +2,8 @@ import { Suspense } from "react"
 import { AuthForm } from "@/components/auth/auth-form"
 import { LucernaSunIcon } from "@/components/lucerna-sun-icon"
 import { Skeleton } from "@/components/ui/skeleton"
+import { createClient } from "@/lib/supabase/server"
+import { redirect } from "next/navigation"
 
 export const metadata = {
   title: "Sign In | Lucerna AI",
@@ -18,12 +20,30 @@ interface AuthPageProps {
 }
 
 export default async function AuthPage({ searchParams }: AuthPageProps) {
+  // Check if user is already authenticated using getUser() for security
+  const supabase = await createClient()
+
+  // Use getSession instead of getUser on the auth page to avoid the "Auth session missing!" error
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+
+  // Log authentication status without error
+  console.log("Auth page - Session check:", session ? "Session exists" : "No session")
+
   // Extract query parameters
   const params = await searchParams;
-  const redirectTo = params.redirectTo || "/dashboard"
-  const error =  params.error
+  const redirectTo = params.redirectTo || "/resume/lab"
+  const errorMsg =  params.error
   const message =  params.message
   const isSignUp =  params.signup === "true"
+
+
+  // If authenticated, redirect to the intended destination or resume lab
+  if (session) {
+    console.log("Auth page - User is authenticated, redirecting to:", redirectTo)
+    redirect(redirectTo)
+  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-white to-gray-50 dark:from-gray-950 dark:to-gray-900 p-4">
@@ -35,10 +55,10 @@ export default async function AuthPage({ searchParams }: AuthPageProps) {
         <p className="text-gray-600 dark:text-gray-400">Illuminate your career journey</p>
       </div>
 
-      {error && (
+      {errorMsg && (
         <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-md max-w-md animate-in fade-in-50 duration-300">
           <p className="font-medium">Authentication Error</p>
-          <p className="text-sm">{error}</p>
+          <p className="text-sm">{errorMsg}</p>
         </div>
       )}
 
