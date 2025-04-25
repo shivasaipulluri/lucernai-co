@@ -1,9 +1,7 @@
 "use server"
 
 export async function calculateScoresWithGPT(
-  originalResume: string,
-  tailoredResume: string,
-  jobDescription: string,
+originalResume: string, tailoredResume: string, jobDescription: string, p0: { atsWeight: number; jdWeight: number },
 ): Promise<{
   ats_score: number
   jd_score: number

@@ -1,11 +1,20 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { BookmarkPlus, BookmarkCheck, Brain, Code, Briefcase, PuzzleIcon as PuzzlePiece } from "lucide-react"
+import {
+  BookmarkPlus,
+  BookmarkCheck,
+  Brain,
+  Code,
+  Briefcase,
+  PuzzleIcon as PuzzlePiece,
+  Mic,
+  MicOff,
+} from "lucide-react"
 import type { InterviewQuestion, InterviewAnswer } from "@/lib/actions/interview-actions"
 import { cn } from "@/lib/utils"
 
@@ -17,6 +26,14 @@ interface InterviewQuestionListProps {
   onNeedsReviewToggle: (questionId: number) => void
 }
 
+// Declare SpeechRecognition interface
+declare global {
+  interface Window {
+    SpeechRecognition: any
+    webkitSpeechRecognition: any
+  }
+}
+
 export function InterviewQuestionList({
   questions,
   answers,
@@ -25,6 +42,80 @@ export function InterviewQuestionList({
   onNeedsReviewToggle,
 }: InterviewQuestionListProps) {
   const [expandedItems, setExpandedItems] = useState<string[]>([])
+  const [isRecording, setIsRecording] = useState<boolean>(false)
+  const [activeQuestionId, setActiveQuestionId] = useState<number | null>(null)
+  const [recognition, setRecognition] = useState<any>(null)
+  const [isRecognitionSupported, setIsRecognitionSupported] = useState<boolean>(true)
+
+  // Initialize speech recognition
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      // Check if the browser supports SpeechRecognition
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+
+      if (SpeechRecognition) {
+        const recognitionInstance = new SpeechRecognition()
+        recognitionInstance.continuous = true
+        recognitionInstance.interimResults = true
+        recognitionInstance.lang = "en-US"
+
+        recognitionInstance.onresult = (event: any) => {
+          if (activeQuestionId) {
+            const transcript = Array.from(event.results)
+              .map((result: any) => result[0].transcript)
+              .join("")
+
+            // Get the current answer
+            const currentAnswer = getAnswer(activeQuestionId)
+
+            // Update with the new transcript
+            onAnswerChange(activeQuestionId, currentAnswer + " " + transcript)
+          }
+        }
+
+        recognitionInstance.onerror = (event: { error: any }) => {
+          console.error("Speech recognition error", event.error)
+          setIsRecording(false)
+        }
+
+        recognitionInstance.onend = () => {
+          setIsRecording(false)
+        }
+
+        setRecognition(recognitionInstance)
+      } else {
+        setIsRecognitionSupported(false)
+      }
+    }
+
+    // Cleanup
+    return () => {
+      if (recognition) {
+        recognition.stop()
+      }
+    }
+  }, [activeQuestionId])
+
+  // Toggle speech recognition
+  const toggleRecording = (questionId: number) => {
+    if (!recognition) return
+
+    if (isRecording && activeQuestionId === questionId) {
+      recognition.stop()
+      setIsRecording(false)
+      setActiveQuestionId(null)
+    } else {
+      // Stop any existing recording
+      if (isRecording) {
+        recognition.stop()
+      }
+
+      // Start new recording for this question
+      setActiveQuestionId(questionId)
+      recognition.start()
+      setIsRecording(true)
+    }
+  }
 
   // Get the icon for a question type
   const getTypeIcon = (type: string) => {
@@ -83,6 +174,7 @@ export function InterviewQuestionList({
           className={cn(
             "border rounded-lg overflow-hidden",
             needsReviewCheck(question.id) && "border-amber-300 shadow-sm",
+            isRecording && activeQuestionId === question.id && "border-red-300 shadow-md",
           )}
         >
           <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-gray-50">
@@ -100,6 +192,11 @@ export function InterviewQuestionList({
                     Review
                   </Badge>
                 )}
+                {isRecording && activeQuestionId === question.id && (
+                  <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 animate-pulse">
+                    Recording
+                  </Badge>
+                )}
               </div>
             </div>
           </AccordionTrigger>
@@ -109,30 +206,60 @@ export function InterviewQuestionList({
                 placeholder="Type your answer here..."
                 value={getAnswer(question.id)}
                 onChange={(e) => onAnswerChange(question.id, e.target.value)}
-                className="min-h-[150px]"
+                className={cn(
+                  "min-h-[150px]",
+                  isRecording && activeQuestionId === question.id && "border-red-300 shadow-sm",
+                )}
               />
               <div className="flex justify-between items-center">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onNeedsReviewToggle(question.id)}
-                  className={cn(
-                    "flex items-center gap-1",
-                    needsReviewCheck(question.id) && "bg-amber-50 text-amber-700 border-amber-200",
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onNeedsReviewToggle(question.id)}
+                    className={cn(
+                      "flex items-center gap-1",
+                      needsReviewCheck(question.id) && "bg-amber-50 text-amber-700 border-amber-200",
+                    )}
+                  >
+                    {needsReviewCheck(question.id) ? (
+                      <>
+                        <BookmarkCheck className="h-4 w-4" />
+                        Remove from Review
+                      </>
+                    ) : (
+                      <>
+                        <BookmarkPlus className="h-4 w-4" />
+                        Mark for Review
+                      </>
+                    )}
+                  </Button>
+
+                  {isRecognitionSupported && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => toggleRecording(question.id)}
+                      className={cn(
+                        "flex items-center gap-1",
+                        isRecording && activeQuestionId === question.id && "bg-red-50 text-red-700 border-red-200",
+                      )}
+                    >
+                      {isRecording && activeQuestionId === question.id ? (
+                        <>
+                          <MicOff className="h-4 w-4" />
+                          Stop Recording
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="h-4 w-4" />
+                          Record Answer
+                        </>
+                      )}
+                    </Button>
                   )}
-                >
-                  {needsReviewCheck(question.id) ? (
-                    <>
-                      <BookmarkCheck className="h-4 w-4" />
-                      Remove from Review
-                    </>
-                  ) : (
-                    <>
-                      <BookmarkPlus className="h-4 w-4" />
-                      Mark for Review
-                    </>
-                  )}
-                </Button>
+                </div>
+
                 <div className="text-xs text-gray-500">
                   {getAnswer(question.id).length > 0 ? (
                     <span>Answer: {getAnswer(question.id).length} characters</span>
@@ -141,6 +268,19 @@ export function InterviewQuestionList({
                   )}
                 </div>
               </div>
+
+              {!isRecognitionSupported && (
+                <div className="text-xs text-amber-600 mt-2">
+                  Voice recording is not supported in your browser. Please use Chrome, Edge, or Safari for this feature.
+                </div>
+              )}
+
+              {isRecording && activeQuestionId === question.id && (
+                <div className="text-sm text-red-600 mt-2 flex items-center gap-2">
+                  <span className="inline-block h-2 w-2 bg-red-600 rounded-full animate-pulse"></span>
+                  Recording in progress... Speak clearly into your microphone.
+                </div>
+              )}
             </div>
           </AccordionContent>
         </AccordionItem>

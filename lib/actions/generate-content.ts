@@ -1,6 +1,12 @@
 "use server"
 
 import { debugLog, errorLog, previewContent } from "@/lib/utils/debug-utils"
+import { createHash } from "crypto"
+
+// Add at the top of the file, after imports
+// Simple in-memory cache for content generation
+const contentCache = new Map<string, { timestamp: number; result: { success: boolean; text: string } }>()
+const CACHE_TTL = 1000 * 60 * 60 // 1 hour cache TTL
 
 // AI provider configuration
 const AI_PROVIDERS = {
@@ -40,6 +46,16 @@ export async function generateContent(
   temperature = 0.7,
 ): Promise<{ success: boolean; text: string }> {
   try {
+    // Generate a cache key based on the prompt and model
+    const cacheKey = `${model}:${temperature}:${createHash("sha256").update(prompt).digest("hex")}`
+
+    // Check cache first
+    const cached = contentCache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      debugLog("GENERATE", `Cache hit for model: ${model}, returning cached result`)
+      return cached.result
+    }
+
     debugLog("GENERATE", `Starting content generation with model: ${model}, prompt length: ${prompt.length} chars`)
 
     // Input validation
@@ -63,28 +79,71 @@ export async function generateContent(
       return { success: false, text: `Error: No API key available for ${provider}` }
     }
 
-    // Call the appropriate provider
+    // Call the appropriate provider with timeout and retry logic
     let result
-    switch (provider) {
-      case "gemini":
-        result = await callGemini(actualApiKey, prompt, model, temperature)
-        break
-      case "mistral":
-        result = await callMistral(actualApiKey, prompt, model, temperature)
-        break
-      case "openrouter":
-        result = await callOpenRouter(actualApiKey, prompt, model, temperature)
-        break
-      default:
-        throw new Error(`Unknown provider: ${provider}`)
+    const maxRetries = 2
+    let retryCount = 0
+    let lastError
+
+    while (retryCount <= maxRetries) {
+      try {
+        // Add timeout to prevent hanging requests
+        const timeoutPromise = new Promise<{ success: false; text: string }>((_, reject) =>
+          setTimeout(() => reject(new Error("Request timeout")), 30000),
+        )
+
+        let providerPromise
+        switch (provider) {
+          case "gemini":
+            providerPromise = callGemini(actualApiKey, prompt, model, temperature)
+            break
+          case "mistral":
+            providerPromise = callMistral(actualApiKey, prompt, model, temperature)
+            break
+          case "openrouter":
+            providerPromise = callOpenRouter(actualApiKey, prompt, model, temperature)
+            break
+          default:
+            throw new Error(`Unknown provider: ${provider}`)
+        }
+
+        // Race between the provider call and the timeout
+        result = await Promise.race([providerPromise, timeoutPromise])
+
+        // If successful, break out of retry loop
+        if (result.success) break
+
+        // If we got an error response but not a timeout, maybe retry
+        lastError = new Error(result.text)
+        retryCount++
+
+        // Wait before retrying (exponential backoff)
+        if (retryCount <= maxRetries) {
+          const backoffMs = Math.min(1000 * Math.pow(2, retryCount), 8000)
+          await new Promise((resolve) => setTimeout(resolve, backoffMs))
+          debugLog("GENERATE", `Retrying after error (attempt ${retryCount}): ${result.text}`)
+        }
+      } catch (error: any) {
+        lastError = error
+        retryCount++
+
+        // Wait before retrying (exponential backoff)
+        if (retryCount <= maxRetries) {
+          const backoffMs = Math.min(1000 * Math.pow(2, retryCount), 8000)
+          await new Promise((resolve) => setTimeout(resolve, backoffMs))
+          debugLog("GENERATE", `Retrying after exception (attempt ${retryCount}): ${error.message}`)
+        }
+      }
+    }
+
+    // If we exhausted retries without success
+    if (!result || !result.success) {
+      const errorMsg = lastError ? lastError.message : "Unknown error after retries"
+      errorLog("GENERATE", `Failed after ${retryCount} retries: ${errorMsg}`)
+      return { success: false, text: `Error after retries: ${errorMsg}` }
     }
 
     // Validate the result
-    if (!result.success) {
-      errorLog("GENERATE", `Provider ${provider} returned error`)
-      return result
-    }
-
     if (!result.text || result.text.trim().length < 10) {
       errorLog("GENERATE", `Provider ${provider} returned empty or too short content`)
       return {
@@ -95,8 +154,15 @@ export async function generateContent(
 
     debugLog("GENERATE", `Successfully generated content with ${provider}, length: ${result.text.length} chars`)
     debugLog("GENERATE", `Preview: ${previewContent(result.text, 100)}`)
+
+    // Cache the successful result
+    contentCache.set(cacheKey, {
+      timestamp: Date.now(),
+      result,
+    })
+
     return result
-  } catch (error) {
+  } catch (error: any) {
     errorLog("GENERATE", "Error generating content:", error)
     return {
       success: false,
@@ -139,7 +205,7 @@ async function callGemini(apiKey: string, prompt: string, model: string, tempera
       success: true,
       text,
     }
-  } catch (error) {
+  } catch (error: any) {
     errorLog("GEMINI", "Error calling Gemini API:", error)
     return {
       success: false,
@@ -183,7 +249,7 @@ async function callMistral(apiKey: string, prompt: string, model: string, temper
       success: true,
       text,
     }
-  } catch (error) {
+  } catch (error: any) {
     errorLog("MISTRAL", "Error calling Mistral API:", error)
     return {
       success: false,
@@ -227,7 +293,7 @@ async function callOpenRouter(apiKey: string, prompt: string, model: string, tem
       success: true,
       text,
     }
-  } catch (error) {
+  } catch (error: any) {
     errorLog("OPENROUTER", "Error calling OpenRouter API:", error)
     return {
       success: false,

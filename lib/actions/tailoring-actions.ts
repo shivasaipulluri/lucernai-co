@@ -19,6 +19,7 @@ import {
 } from "@/utils/ai/resume-section-utils"
 import { compileRefinementPrompt } from "@/utils/ai/compile-refinement-prompt"
 import { createHash } from "crypto"
+import { callMixtralForScoring } from "@/lib/actions/mixtral-scoring"
 
 interface TailoringResult {
   success: boolean
@@ -33,6 +34,162 @@ interface TailoringResult {
 interface SaveResult {
   success: boolean
   error?: string
+}
+
+interface SaveEditResult {
+  success: boolean
+  error?: string
+}
+
+interface RescoreResult {
+  success: boolean
+  error?: string
+  data?: {
+    atsScore: number
+    jdScore: number
+    atsFeedback?: string
+    jdFeedback?: string
+  }
+}
+
+/**
+ * Save manual edits to a resume
+ */
+export async function saveManualEdit(resumeId: string, editedText: string): Promise<SaveEditResult> {
+  try {
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      return { success: false, error: "Not authenticated" }
+    }
+
+    // Check if the resume exists and belongs to the user
+    const resume = await prisma.resume.findUnique({
+      where: {
+        id: resumeId,
+        userId: user.id,
+      },
+    })
+
+    if (!resume) {
+      return { success: false, error: "Resume not found" }
+    }
+
+    // Update the resume with the edited text
+    await prisma.resume.update({
+      where: {
+        id: resumeId,
+      },
+      data: {
+        modifiedResume: editedText,
+        wasManuallyEdited: true,
+        scoresStale: true, // Mark scores as stale since the content has changed
+      },
+    })
+
+    // Create a manual edit entry in the tailoring attempts
+    await prisma.manualEdit.create({
+      data: {
+        userId: user.id,
+        resumeId: resumeId,
+        editedText: editedText,
+      },
+    })
+
+    // Safely revalidate paths
+    // We'll avoid calling revalidatePath during render
+    console.log(`Manual edit saved for resumeId: ${resumeId}`)
+    // Client will handle refresh
+
+    return { success: true }
+  } catch (error) {
+    console.error("Error saving manual edit:", error)
+    return { success: false, error: "Failed to save changes" }
+  }
+}
+
+/**
+ * Re-score a manually edited resume
+ */
+export async function rescoreManualEdit(resumeId: string): Promise<RescoreResult> {
+  try {
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      return { success: false, error: "Not authenticated" }
+    }
+
+    // Check if the resume exists and belongs to the user
+    const resume = await prisma.resume.findUnique({
+      where: {
+        id: resumeId,
+        userId: user.id,
+      },
+    })
+
+    if (!resume) {
+      return { success: false, error: "Resume not found" }
+    }
+
+    if (!resume.modifiedResume) {
+      return { success: false, error: "No modified resume content found" }
+    }
+
+    // Call Mixtral for scoring
+    const scoringResult = await callMixtralForScoring(resume.modifiedResume, resume.jobDescription)
+
+    if (scoringResult.error) {
+      return { success: false, error: scoringResult.error }
+    }
+
+    // Update the resume with the new scores
+    await prisma.resume.update({
+      where: {
+        id: resumeId,
+      },
+      data: {
+        atsScore: scoringResult.atsScore,
+        jdScore: scoringResult.jdScore,
+        scoresStale: false, // Scores are now up-to-date
+      },
+    })
+
+    // Create a manual scoring entry
+    await prisma.manualScoring.create({
+      data: {
+        userId: user.id,
+        resumeId: resumeId,
+        atsScore: scoringResult.atsScore,
+        jdScore: scoringResult.jdScore,
+        atsFeedback: scoringResult.atsFeedback || "",
+        jdFeedback: scoringResult.jdFeedback || "",
+      },
+    })
+
+    // Safely revalidate paths
+    // We'll avoid calling revalidatePath during render
+    console.log(`Manual edit rescored for resumeId: ${resumeId}`)
+    // Client will handle refresh
+
+    return {
+      success: true,
+      data: {
+        atsScore: scoringResult.atsScore,
+        jdScore: scoringResult.jdScore,
+        atsFeedback: scoringResult.atsFeedback,
+        jdFeedback: scoringResult.jdFeedback,
+      },
+    }
+  } catch (error) {
+    console.error("Error re-scoring manual edit:", error)
+    return { success: false, error: "Failed to re-score resume" }
+  }
 }
 
 /**
@@ -244,15 +401,39 @@ function sha256Hash(text: string): string {
 }
 
 /**
+ * Helper function to determine the temperature for content generation based on the tailoring mode.
+ */
+function getTemperatureForMode(mode: TailoringMode): number {
+  switch (mode) {
+    case "aggressive":
+      return 0.7 // Higher temperature for more creative and potentially riskier outputs
+    case "balanced":
+      return 0.5 // Balanced temperature for a mix of creativity and coherence
+    case "conservative":
+      return 0.3 // Lower temperature for more coherent and predictable outputs
+    case "personalized":
+    default:
+      return 0.5 // Default temperature for personalized mode
+  }
+}
+
+type TailoringMode = "personalized" | "aggressive" | "balanced" | "conservative"
+
+/**
  * Runs the tailoring analysis with analytics tracking.
  * This is the main function that handles the tailoring process.
+ * Optimized for performance and reliability.
  */
 export async function runTailoringAnalysisWithAnalytics(
   resumeId: string,
   isRefinement = false,
 ): Promise<TailoringResult> {
+  // Performance tracking
+  const startTime = Date.now()
+  const perfMetrics: Record<string, number> = {}
+
   try {
-    debugLog("TAILOR", `Starting tailoring analysis for resumeId: ${resumeId}, isRefinement: ${isRefinement}`)
+    debugLog("TAILOR", `Starting optimized tailoring for resumeId: ${resumeId}, isRefinement: ${isRefinement}`)
     const supabase = await createClient()
     const {
       data: { user },
@@ -263,13 +444,14 @@ export async function runTailoringAnalysisWithAnalytics(
       return { success: false, error: "Not authenticated" }
     }
 
-    debugLog("TAILOR", `User authenticated: ${user.id}`)
-
     // Check if the resume exists and belongs to the user
     const resume = await prisma.resume.findUnique({
       where: {
         id: resumeId,
         userId: user.id,
+      },
+      include: {
+        tailoringAttempts: true, // Include previous attempts for context
       },
     })
 
@@ -290,19 +472,50 @@ export async function runTailoringAnalysisWithAnalytics(
     await updateTailoringProgress(resumeId, user.id, "analyzing", 10)
     debugLog("TAILOR", `Updated progress: analyzing, 10%`)
 
-    // Analyze the job description to get intelligence
+    // Analyze the job description to get intelligence - run in parallel with initial setup
+    const jdAnalysisPromise = analyzeJobDescription(jobDescription).catch((error) => {
+      errorLog("TAILOR", "Error analyzing job description:", error)
+      return { success: false, data: null }
+    })
+
+    // Update progress for JD analysis
+    await updateTailoringProgress(resumeId, user.id, "analyzing_jd", 15)
+
+    // Extract original sections for tracking
+    const originalSections = extractSections(resumeText)
+
+    // Constants for tailoring
+    const MAX_ATTEMPTS = 3
+    let iterations = 0
+    let bestAttempt = {
+      resumeText: "",
+      atsScore: 0,
+      jdScore: 0,
+      golden_passed: false,
+      atsFeedback: "",
+      jdFeedback: "",
+    }
+    let bestScore = 0
+    let previousFeedback: string[] = []
+    let previousSuggestions: string[] = []
+
+    // Initialize the current resume sections map to track all sections across iterations
+    const modifiedSectionsMap: Record<string, string> = { ...originalSections }
+
+    // Track all modified sections across all iterations for logging
+    let allModifiedSections: string[] = []
+
+    // Wait for JD analysis to complete
+    const jdAnalysisResult = await jdAnalysisPromise
     let jdIntelligence = null
-    try {
-      await updateTailoringProgress(resumeId, user.id, "analyzing_jd", 15)
-      debugLog("TAILOR", `Analyzing job description...`)
-      const analysisResult = await analyzeJobDescription(jobDescription)
-      debugLog("TAILOR", `JD analysis result: ${JSON.stringify(analysisResult.success)}`)
 
-      if (analysisResult.success && analysisResult.data) {
-        jdIntelligence = analysisResult.data
+    if (jdAnalysisResult.success && jdAnalysisResult.data) {
+      jdIntelligence = jdAnalysisResult.data
+      perfMetrics.jdAnalysisTime = Date.now() - startTime
 
-        // Store the JD intelligence
-        await prisma.jobDescriptionIntelligence.create({
+      // Store the JD intelligence in parallel with other operations
+      prisma.jobDescriptionIntelligence
+        .create({
           data: {
             userId: user.id,
             resumeId: resumeId,
@@ -314,37 +527,26 @@ export async function runTailoringAnalysisWithAnalytics(
             categories: jdIntelligence.categories,
           },
         })
-        debugLog("TAILOR", `JD intelligence stored`)
-      }
-    } catch (error) {
-      errorLog("TAILOR", "Error analyzing job description:", error)
-      // Continue with tailoring even if JD analysis fails
+        .catch((error) => {
+          errorLog("TAILOR", "Error storing JD intelligence:", error)
+          // Non-critical error, continue with tailoring
+        })
+
+      debugLog("TAILOR", `JD intelligence obtained and storing initiated`)
     }
 
-    // Constants for tailoring
-    const MAX_ATTEMPTS = 3
-    let iterations = 0
-    let bestAttempt = {
-      resumeText: "",
-      ats_score: 0,
-      jd_score: 0,
-      golden_passed: false,
-      atsFeedback: "",
-      jdFeedback: "",
+    // Optimization: Prepare context for all iterations upfront
+    const tailoringContext = {
+      resumeText,
+      jobDescription,
+      mode: tailoringMode as any,
+      jdIntelligence,
+      version: resume.version,
     }
-    let bestScore = 0
-    let previousFeedback: string[] = []
-    let previousSuggestions: string[] = []
 
-    // Initialize the current resume sections map to track all sections across iterations
-    const originalSections = extractSections(resumeText)
-    const modifiedSectionsMap: Record<string, string> = { ...originalSections }
-
-    // Track all modified sections across all iterations for logging
-    let allModifiedSections: string[] = []
-
-    // Multi-iteration tailoring process
+    // Multi-iteration tailoring process with optimized approach
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const attemptStartTime = Date.now()
       iterations = attempt
       debugLog("TAILOR", `Starting tailoring attempt ${attempt} of ${MAX_ATTEMPTS}...`)
 
@@ -356,35 +558,30 @@ export async function runTailoringAnalysisWithAnalytics(
         Math.round(20 + (attempt / MAX_ATTEMPTS) * 50),
         attempt,
       )
-      debugLog("TAILOR", `Updated progress: attempt_${attempt}, ${Math.round(20 + (attempt / MAX_ATTEMPTS) * 50)}%`)
 
       let tailoredResume = ""
       let promptUsed = ""
-      let sectionsToModify: Record<string, string> = {}
       let modifiedSections: Record<string, { before: string; after: string }> = {}
       let modifiedSectionNames: string[] = []
+      let sectionsToRefine: Record<string, string> = {}
 
       // First iteration: Send full resume
-      // Subsequent iterations: Send only sections that need refinement
+      // Subsequent iterations: Use more targeted approach
       if (attempt === 1) {
         // Create tailoring prompt with full resume
         promptUsed = compileTailoringPrompt({
-          resumeText,
-          jobDescription,
-          mode: tailoringMode as any,
-          jdIntelligence,
+          ...tailoringContext,
           previousFeedback,
-          version: resume.version,
         })
+
         debugLog("TAILOR", `Compiled full tailoring prompt for first iteration, length: ${promptUsed.length} chars`)
 
         // Generate tailored resume with real-time API call
-        debugLog("TAILOR", `Calling generateContent with model: gemini-1.5-flash`)
         const { success, text } = await generateContent(
           "", // API key from env
           promptUsed,
           "gemini-1.5-flash",
-          0.5,
+          getTemperatureForMode(tailoringMode as TailoringMode),
         )
 
         if (!success || !text) {
@@ -399,15 +596,13 @@ export async function runTailoringAnalysisWithAnalytics(
         debugLog("TAILOR", `Generated and cleaned tailored resume, length: ${tailoredResume.length} chars`)
         debugLog("TAILOR", `Preview: ${previewContent(tailoredResume, 100)}`)
 
-        // Extract all sections from the first iteration result
-        const newSections = extractSections(tailoredResume)
-
         // Compute section-level changes
         modifiedSections = diffSections(resumeText, tailoredResume)
         modifiedSectionNames = Object.keys(modifiedSections)
         debugLog("TAILOR", `Identified ${modifiedSectionNames.length} modified sections`)
 
         // Update the modifiedSectionsMap with the new sections
+        const newSections = extractSections(tailoredResume)
         Object.keys(newSections).forEach((sectionName) => {
           if (modifiedSections[sectionName]) {
             // Clean the section content before storing it
@@ -418,33 +613,57 @@ export async function runTailoringAnalysisWithAnalytics(
         // Add to the cumulative list of modified sections
         allModifiedSections = [...new Set([...allModifiedSections, ...modifiedSectionNames])]
       } else {
-        // For subsequent iterations, only send sections that need refinement
-        // based on feedback from previous iteration
-
+        // For subsequent iterations, use a more targeted approach
         // Reconstruct the current best resume from all sections
         const currentBestResume = reconstructResumeFromSections(modifiedSectionsMap)
 
-        // Extract sections that need refinement based on feedback
-        // For simplicity, we'll send all sections that were modified in the previous iteration
-        // A more sophisticated approach would analyze feedback to determine which sections need refinement
-        const sectionsToRefine: Record<string, string> = {}
-        Object.entries(modifiedSections).forEach(([sectionName, { after }]) => {
-          sectionsToRefine[sectionName] = after
-        })
+        // Optimization: Only refine if we have feedback and the previous attempt wasn't successful
+        if (previousFeedback.length === 0 && bestAttempt.golden_passed) {
+          debugLog("TAILOR", `Skipping iteration ${attempt} - no feedback needed and golden rules passed`)
+          break
+        }
 
-        // Store sections being sent for modification
-        sectionsToModify = { ...sectionsToRefine }
+        // Determine which sections need refinement based on feedback
+        sectionsToRefine = {}
 
-        // If no sections were modified or we have no feedback, use the full resume
-        if (Object.keys(sectionsToRefine).length === 0 || previousFeedback.length === 0) {
+        // Optimization: Use a smarter approach to identify sections needing refinement
+        if (previousFeedback.length > 0) {
+          // Extract section names from feedback
+          const feedbackText = previousFeedback.join(" ").toLowerCase()
+
+          // Find sections mentioned in feedback
+          Object.keys(modifiedSectionsMap).forEach((sectionName) => {
+            if (feedbackText.includes(sectionName.toLowerCase())) {
+              sectionsToRefine[sectionName] = modifiedSectionsMap[sectionName]
+            }
+          })
+
+          // If no specific sections found, include sections from previous modifications
+          if (Object.keys(sectionsToRefine).length === 0) {
+            Object.entries(modifiedSections).forEach(([sectionName, { after }]) => {
+              sectionsToRefine[sectionName] = after
+            })
+          }
+
+          // If still no sections, include key resume sections
+          if (Object.keys(sectionsToRefine).length === 0) {
+            const keySections = ["EXPERIENCE", "SKILLS", "SUMMARY", "EDUCATION"].filter(
+              (section) => modifiedSectionsMap[section],
+            )
+
+            keySections.forEach((section) => {
+              sectionsToRefine[section] = modifiedSectionsMap[section]
+            })
+          }
+        }
+
+        // If we still have no sections to refine, use the full resume
+        if (Object.keys(sectionsToRefine).length === 0) {
           debugLog("TAILOR", `No specific sections to refine, using full resume for iteration ${attempt}`)
           promptUsed = compileTailoringPrompt({
+            ...tailoringContext,
             resumeText: currentBestResume,
-            jobDescription,
-            mode: tailoringMode as any,
-            jdIntelligence,
             previousFeedback,
-            version: resume.version,
           })
         } else {
           // Create refinement prompt with only sections that need refinement
@@ -457,20 +676,19 @@ export async function runTailoringAnalysisWithAnalytics(
             version: resume.version,
             goldenRuleFeedback: previousSuggestions,
           })
-          debugLog("TAILOR", `Compiled refinement prompt for iteration ${attempt}, length: ${promptUsed.length} chars`)
+
           debugLog(
             "TAILOR",
             `Refining ${Object.keys(sectionsToRefine).length} sections: ${Object.keys(sectionsToRefine).join(", ")}`,
           )
         }
 
-        // Generate refined sections
-        debugLog("TAILOR", `Calling generateContent for refinement with model: gemini-1.5-flash`)
+        // Generate refined content
         const { success, text } = await generateContent(
           "", // API key from env
           promptUsed,
           "gemini-1.5-flash",
-          0.5,
+          getTemperatureForMode(tailoringMode as TailoringMode),
         )
 
         if (!success || !text) {
@@ -478,49 +696,60 @@ export async function runTailoringAnalysisWithAnalytics(
           continue
         }
 
-        // Clean the generated text immediately to remove any debugging markers
+        // Clean the generated text
         const cleanedText = cleanResumeOutput(text)
 
-        // Parse the refined sections from the response
-        const refinedSections: Record<string, string> = {}
-        const sectionMatches = cleanedText.matchAll(/### (.+?) ###([\s\S]+?)(?=### |$)/g)
+        // Process the refined content
+        if (Object.keys(sectionsToRefine).length > 0) {
+          // Parse the refined sections from the response
+          const refinedSections: Record<string, string> = {}
+          const sectionMatches = cleanedText.matchAll(/### (.+?) ###([\s\S]+?)(?=### |$)/g)
 
-        for (const match of sectionMatches) {
-          const sectionName = match[1].trim()
-          const sectionContent = match[2].trim()
-          // Clean the section content before storing it
-          refinedSections[sectionName] = cleanSectionContent(sectionContent)
-        }
-
-        // Update the current resume sections with the refined sections, but only if there's a real difference
-        Object.entries(refinedSections).forEach(([sectionName, refinedContent]) => {
-          const previousContent = modifiedSectionsMap[sectionName] || ""
-          const previousHash = sha256Hash(previousContent)
-          const refinedHash = sha256Hash(refinedContent)
-
-          if (previousHash !== refinedHash) {
-            debugLog("TAILOR", `Updating section ${sectionName} due to content change (hash diff)`)
-            modifiedSectionsMap[sectionName] = refinedContent
-          } else {
-            debugLog("TAILOR", `Skipping section ${sectionName} - no content change detected`)
+          for (const match of Array.from(sectionMatches)) {
+            const sectionName = match[1].trim()
+            const sectionContent = match[2].trim()
+            refinedSections[sectionName] = cleanSectionContent(sectionContent)
           }
-        })
 
-        // Track which sections were actually modified in the response
-        modifiedSectionNames = Object.keys(refinedSections)
-        debugLog(
-          "TAILOR",
-          `Received ${modifiedSectionNames.length} refined sections: ${modifiedSectionNames.join(", ")}`,
-        )
+          // If we couldn't parse sections properly, try to extract them
+          if (Object.keys(refinedSections).length === 0) {
+            const extractedSections = extractSections(cleanedText)
+            Object.entries(extractedSections).forEach(([name, content]) => {
+              if (sectionsToRefine[name]) {
+                refinedSections[name] = cleanSectionContent(content)
+              }
+            })
+          }
+
+          // Update the modified sections map with refined content
+          Object.entries(refinedSections).forEach(([sectionName, content]) => {
+            if (content && content.length > 10) {
+              modifiedSectionsMap[sectionName] = content
+            }
+          })
+
+          // Track which sections were modified
+          modifiedSectionNames = Object.keys(refinedSections)
+
+          // Reconstruct the full resume from updated sections
+          tailoredResume = reconstructResumeFromSections(modifiedSectionsMap)
+        } else {
+          // If we sent the full resume, use the full response
+          tailoredResume = cleanedText
+
+          // Update modified sections map
+          const newSections = extractSections(tailoredResume)
+          Object.entries(newSections).forEach(([name, content]) => {
+            modifiedSectionsMap[name] = cleanSectionContent(content)
+          })
+
+          // Compute changes
+          modifiedSections = diffSections(currentBestResume, tailoredResume)
+          modifiedSectionNames = Object.keys(modifiedSections)
+        }
 
         // Add to the cumulative list of modified sections
         allModifiedSections = [...new Set([...allModifiedSections, ...modifiedSectionNames])]
-
-        // Reconstruct the full resume from the updated sections
-        tailoredResume = reconstructResumeFromSections(modifiedSectionsMap)
-
-        // Compute section-level changes between previous best and new version
-        modifiedSections = diffSections(currentBestResume, tailoredResume)
       }
 
       // Update progress to indicate we're scoring the result
@@ -531,18 +760,14 @@ export async function runTailoringAnalysisWithAnalytics(
         Math.round(20 + ((attempt - 0.5) / MAX_ATTEMPTS) * 50),
         attempt,
       )
-      debugLog(
-        "TAILOR",
-        `Updated progress: scoring_${attempt}, ${Math.round(20 + ((attempt - 0.5) / MAX_ATTEMPTS) * 50)}%`,
-      )
 
-      // Check golden rules and score the result
-      debugLog("TAILOR", `Checking golden rules...`)
-      const goldenRulesResult = await checkGoldenRules(tailoredResume, jobDescription)
+      // Run golden rules check and scoring in parallel for efficiency
+      const [goldenRulesResult, scoringResult] = await Promise.all([
+        checkGoldenRules(tailoredResume, jobDescription),
+        calculateScoresWithGPT(resumeText, tailoredResume, jobDescription, { atsWeight: 0.3, jdWeight: 0.7 }),
+      ])
+
       debugLog("TAILOR", `Golden rules result: passed=${goldenRulesResult.passed}`)
-
-      debugLog("TAILOR", `Calculating scores...`)
-      const scoringResult = await calculateScoresWithGPT(resumeText, tailoredResume, jobDescription)
       debugLog("TAILOR", `Scoring result: ats=${scoringResult.ats_score}, jd=${scoringResult.jd_score}`)
 
       const ats_score = scoringResult.ats_score || 0
@@ -559,8 +784,8 @@ export async function runTailoringAnalysisWithAnalytics(
       if (totalScore > bestScore) {
         bestAttempt = {
           resumeText: tailoredResume,
-          ats_score,
-          jd_score,
+          atsScore: ats_score,
+          jdScore: jd_score,
           golden_passed: goldenRulesResult.passed,
           atsFeedback,
           jdFeedback,
@@ -569,11 +794,7 @@ export async function runTailoringAnalysisWithAnalytics(
         debugLog("TAILOR", `New best attempt: ats=${ats_score}, jd=${jd_score}, total=${totalScore}`)
       }
 
-      // Store the tailoring attempt with enhanced logging
-      const modifiedSectionsSent = Object.keys(sectionsToModify)
-      const modifiedSectionsReceived = modifiedSectionNames
-      const promptTokens = promptUsed.length
-
+      // Store the tailoring attempt
       await prisma.tailoringAttempt.create({
         data: {
           userId: user.id,
@@ -586,61 +807,51 @@ export async function runTailoringAnalysisWithAnalytics(
           suggestions: previousSuggestions.join("\n"),
           atsFeedback,
           jdFeedback,
-          // Store additional data for traceability
-          modifiedSectionsSent: JSON.stringify(modifiedSectionsSent),
-          modifiedSectionsReceived: JSON.stringify(modifiedSectionsReceived),
-          promptTokens: promptTokens, // Approximate token count based on character length
+          modifiedSectionsSent: JSON.stringify(Object.keys(sectionsToRefine || {})),
+          modifiedSectionsReceived: JSON.stringify(modifiedSectionNames),
+          promptTokens: promptUsed.length,
           goldenRuleFeedback: JSON.stringify(goldenRulesResult),
           iteration: attempt,
           modifiedSections: JSON.stringify(modifiedSections),
           score: totalScore,
         },
       })
-      debugLog("TAILOR", `Stored tailoring attempt ${attempt} with enhanced logging`)
 
-      // Exit early if golden rules passed
-      if (goldenRulesResult.passed) {
-        debugLog("TAILOR", `Golden rules passed on attempt ${attempt}, stopping further attempts`)
+      // Track performance metrics
+      perfMetrics[`attempt_${attempt}_time`] = Date.now() - attemptStartTime
+
+      // Exit early if golden rules passed or we have a high score
+      if (goldenRulesResult.passed || totalScore > 170) {
+        debugLog(
+          "TAILOR",
+          `Early termination at attempt ${attempt}: golden_passed=${goldenRulesResult.passed}, score=${totalScore}`,
+        )
         break
       }
     }
 
     // Update progress to processing
     await updateTailoringProgress(resumeId, user.id, "processing", 80)
-    debugLog("TAILOR", `Updated progress: processing, 80%`)
 
     // Ensure all original sections are present in the final output
     Object.keys(originalSections).forEach((sectionName) => {
       if (!modifiedSectionsMap[sectionName]) {
         modifiedSectionsMap[sectionName] = cleanSectionContent(originalSections[sectionName])
-        debugLog("TAILOR", `Section "${sectionName}" was not modified, using original content`)
-      }
-    })
-
-    // Log if any section was not modified in any iteration
-    Object.keys(originalSections).forEach((section) => {
-      if (!allModifiedSections.includes(section)) {
-        debugLog("TAILOR", `Section "${section}" was not modified in any iteration.`)
       }
     })
 
     // Reconstruct the final resume from all sections
     const finalTailoredResume = reconstructResumeFromSections(modifiedSectionsMap)
-    debugLog("TAILOR", `Reconstructed final resume from all sections, length: ${finalTailoredResume.length} chars`)
 
-    // Clean the tailored resume output one final time to ensure no debugging markers remain
+    // Clean the tailored resume output one final time
     const cleanedResume = cleanResumeOutput(finalTailoredResume)
-    debugLog("TAILOR", `Cleaned resume output, length: ${cleanedResume.length} chars`)
-    debugLog("TAILOR", `Preview: ${previewContent(cleanedResume, 100)}`)
-
-    // Store the final modified sections
-    const finalModifiedSections = diffSections(resumeText, cleanedResume)
+    debugLog("TAILOR", `Final resume length: ${cleanedResume.length} chars`)
 
     // Validate the cleaned resume
     if (!cleanedResume || cleanedResume.length < 50) {
       errorLog("TAILOR", `Cleaned resume is too short or empty: "${cleanedResume}"`)
 
-      // Create a fallback resume content if cleaning failed
+      // Create a fallback resume content
       const fallbackContent = `
 [TAILORING ENCOUNTERED AN ERROR]
 
@@ -652,7 +863,7 @@ Please try again or contact support if the problem persists.
 `.trim()
 
       // Update the resume with the fallback content
-      const updatedResume = await prisma.resume.update({
+      await prisma.resume.update({
         where: {
           id: resumeId,
           userId: user.id,
@@ -664,24 +875,12 @@ Please try again or contact support if the problem persists.
           version: 1,
           tailoringMode: tailoringMode,
           goldenPassed: false,
-          finalModifiedSections: JSON.stringify(allModifiedSections), // Store all modified sections for traceability
+          finalModifiedSections: JSON.stringify(allModifiedSections),
         },
       })
 
       // Update progress to error
       await updateTailoringProgress(resumeId, user.id, "error", 0)
-
-      debugLog("TAILOR", `Updated resume with fallback content due to cleaning failure`)
-
-      // Revalidate paths even in error case
-      try {
-        await revalidateResumePage(resumeId)
-        await revalidateDashboardPage()
-        debugLog("TAILOR", `Revalidated paths for resumeId: ${resumeId} (error case)`)
-      } catch (revalidateError) {
-        errorLog("TAILOR", "Error revalidating paths:", revalidateError)
-      }
-
       return {
         success: false,
         error: "Failed to generate valid resume content",
@@ -698,7 +897,6 @@ Please try again or contact support if the problem persists.
     }
 
     // Update the resume with the cleaned tailored resume and scores
-    debugLog("TAILOR", `Updating resume with tailored content and scores...`)
     try {
       const updatedResume = await prisma.resume.update({
         where: {
@@ -707,34 +905,20 @@ Please try again or contact support if the problem persists.
         },
         data: {
           modifiedResume: cleanedResume,
-          atsScore: bestAttempt.ats_score,
-          jdScore: bestAttempt.jd_score,
+          atsScore: bestAttempt.atsScore,
+          jdScore: bestAttempt.jdScore,
           version: currentVersion,
           tailoringMode: tailoringMode,
-          goldenPassed: finalGoldenRulesResult.passed, // Use the final golden rules check result
-          finalModifiedSections: JSON.stringify(allModifiedSections), // Store all modified sections for traceability
+          goldenPassed: finalGoldenRulesResult.passed,
+          finalModifiedSections: JSON.stringify(allModifiedSections),
         },
       })
 
-      debugLog(
-        "TAILOR",
-        `Resume updated successfully: ${JSON.stringify({
-          id: updatedResume.id,
-          atsScore: updatedResume.atsScore,
-          jdScore: updatedResume.jdScore,
-          modifiedResumeLength: updatedResume.modifiedResume?.length || 0,
-          modifiedResumePreview: previewContent(updatedResume.modifiedResume, 50),
-          finalModifiedSections: allModifiedSections,
-        })}`,
-      )
-
       if (!updatedResume.modifiedResume || updatedResume.modifiedResume.length < 50) {
-        errorLog("TAILOR", `Updated resume has invalid modifiedResume: "${updatedResume.modifiedResume}"`)
         throw new Error("Failed to save valid resume content")
       }
     } catch (error) {
       errorLog("TAILOR", `Error updating resume:`, error)
-      // Update progress to error
       await updateTailoringProgress(resumeId, user.id, "error", 0)
       throw error
     }
@@ -746,18 +930,16 @@ Please try again or contact support if the problem persists.
         resumeId: resumeId,
         tailoringMode: tailoringMode,
         iterations: iterations,
-        atsScore: bestAttempt.ats_score,
-        jdScore: bestAttempt.jd_score,
-        goldenPassed: finalGoldenRulesResult.passed, // Use the final golden rules check result
+        atsScore: bestAttempt.atsScore,
+        jdScore: bestAttempt.jdScore,
+        goldenPassed: finalGoldenRulesResult.passed,
         isRefinement: isRefinement,
-        modifiedSections: JSON.stringify(allModifiedSections), // Store all modified sections for analytics
+        modifiedSections: JSON.stringify(allModifiedSections),
       },
     })
-    debugLog("TAILOR", `Created tailoring analytics entry`)
 
     // Update progress to completed
     await updateTailoringProgress(resumeId, user.id, "completed", 100)
-    debugLog("TAILOR", `Updated progress: completed, 100%`)
 
     // Log analytics
     await logTailoringAnalytics({
@@ -766,33 +948,25 @@ Please try again or contact support if the problem persists.
       originalText: resumeText,
       tailoredText: cleanedResume,
       jobDescription,
-      atsScore: bestAttempt.ats_score,
-      jdScore: bestAttempt.jd_score,
+      atsScore: bestAttempt.atsScore,
+      jdScore: bestAttempt.jdScore,
       tailoringMode,
       isRefinement,
       iterations,
-      goldenPassed: finalGoldenRulesResult.passed, // Use the final golden rules check result
-      modifiedSections: allModifiedSections, // Include modified sections in analytics
+      goldenPassed: finalGoldenRulesResult.passed,
+      modifiedSections: allModifiedSections,
     })
-    debugLog("TAILOR", `Logged tailoring analytics`)
 
-    // Revalidate paths immediately after completion
-    // try {
-    //   await revalidateResumePage(resumeId)
-    //   await revalidateDashboardPage()
-    //   debugLog("TAILOR", `Revalidated paths for resumeId: ${resumeId}`)
-    // } catch (revalidateError) {
-    //   errorLog("TAILOR", "Error revalidating paths:", revalidateError)
-    //   // Continue even if revalidation fails
-    // }
-    // We'll avoid calling revalidatePath during render
+    // Log performance metrics
+    perfMetrics.totalTime = Date.now() - startTime
+    debugLog("TAILOR_PERF", `Performance metrics: ${JSON.stringify(perfMetrics)}`)
 
     return {
       success: true,
       data: {
         version: currentVersion,
-        ats_score: bestAttempt.ats_score,
-        jd_score: bestAttempt.jd_score,
+        ats_score: bestAttempt.atsScore,
+        jd_score: bestAttempt.jdScore,
       },
     }
   } catch (error) {
@@ -807,7 +981,6 @@ Please try again or contact support if the problem persists.
 
       if (user) {
         await updateTailoringProgress(resumeId, user.id, "error", 0)
-        debugLog("TAILOR", `Updated progress to error state`)
       }
     } catch (progressError) {
       errorLog("TAILOR", "Error updating tailoring progress:", progressError)

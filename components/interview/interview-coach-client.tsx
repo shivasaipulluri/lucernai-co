@@ -23,6 +23,7 @@ import {
   RefreshCw,
   ArrowLeft,
   Save,
+  Volume2,
 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { LucernaSunIcon } from "@/components/lucerna-sun-icon"
@@ -74,10 +75,23 @@ export function InterviewCoachClient({ initialSessionId, recentSessions = [] }: 
   const [timerActive, setTimerActive] = useState<boolean>(false)
   const [timerSeconds, setTimerSeconds] = useState<number>(0)
   const [showSidebar, setShowSidebar] = useState<boolean>(true)
+  const [isSpeechRecognitionSupported, setIsSpeechRecognitionSupported] = useState<boolean>(true)
 
   const { toast } = useToast()
   const router = useRouter()
   const searchParams = useSearchParams()
+
+  // Check if speech recognition is supported
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const isSpeechSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition)
+      setIsSpeechRecognitionSupported(isSpeechSupported)
+
+      if (!isSpeechSupported) {
+        console.log("Speech recognition is not supported in this browser")
+      }
+    }
+  }, [])
 
   // Load session if sessionId is provided
   useEffect(() => {
@@ -386,6 +400,16 @@ export function InterviewCoachClient({ initialSessionId, recentSessions = [] }: 
           Practice answering interview questions tailored to your target role.
         </p>
       </div>
+
+      {!isSpeechRecognitionSupported && (
+        <Alert variant="default" className="mb-6">
+          <Volume2 className="h-4 w-4" />
+          <AlertDescription>
+            Voice recording is not supported in your current browser. For the best experience with voice-to-text, please
+            use Chrome, Edge, or Safari.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="mb-6">

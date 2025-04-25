@@ -28,113 +28,35 @@ const COMMON_SECTION_HEADERS = [
 
 /**
  * Extracts sections from a resume text
+ * Optimized for performance with regex caching and more efficient processing
  */
 export function extractSections(text: string): Record<string, string> {
-  // Expanded list of section headers to catch more variations
-  const sectionHeaders = [
-    "SUMMARY",
-    "EXECUTIVE SUMMARY",
-    "PROFESSIONAL SUMMARY",
-    "CAREER SUMMARY",
-    "PROFILE",
-    "PROFESSIONAL PROFILE",
-    "CAREER PROFILE",
-    "OBJECTIVE",
-    "CAREER OBJECTIVE",
-    "PROFESSIONAL OBJECTIVE",
-    "EXPERIENCE",
-    "WORK EXPERIENCE",
-    "PROFESSIONAL EXPERIENCE",
-    "EMPLOYMENT HISTORY",
-    "HISTORY OF EMPLOYMENT",
-    "WORK HISTORY",
-    "CAREER HISTORY",
-    "HISTORY",
-    "EMPLOYMENT",
-    "EDUCATION",
-    "EDUCATIONAL BACKGROUND",
-    "ACADEMIC BACKGROUND",
-    "ACADEMIC HISTORY",
-    "SKILLS",
-    "TECHNICAL SKILLS",
-    "CORE SKILLS",
-    "KEY SKILLS",
-    "PROFESSIONAL SKILLS",
-    "COMPETENCIES",
-    "CORE COMPETENCIES",
-    "KEY COMPETENCIES",
-    "CERTIFICATIONS",
-    "CERTIFICATES",
-    "CREDENTIALS",
-    "LICENSES",
-    "PROJECTS",
-    "KEY PROJECTS",
-    "PROFESSIONAL PROJECTS",
-    "ACHIEVEMENTS",
-    "ACCOMPLISHMENTS",
-    "KEY ACHIEVEMENTS",
-    "AWARDS",
-    "HONORS",
-    "RECOGNITIONS",
-    "LANGUAGES",
-    "LANGUAGE PROFICIENCY",
-    "INTERESTS",
-    "HOBBIES",
-    "PERSONAL INTERESTS",
-    "VOLUNTEER EXPERIENCE",
-    "VOLUNTEER WORK",
-    "COMMUNITY SERVICE",
-    "REFERENCES",
-    "PROFESSIONAL REFERENCES",
-    "PUBLICATIONS",
-    "RESEARCH",
-    "PRESENTATIONS",
-    "PROFESSIONAL AFFILIATIONS",
-    "MEMBERSHIPS",
-    "PROFESSIONAL MEMBERSHIPS",
-    "ADDITIONAL INFORMATION",
-    "ADDITIONAL SKILLS",
-    "ADDITIONAL EXPERIENCE",
-    "RELEVANT COURSEWORK",
-    "COURSEWORK",
-    "TRAINING",
-    "PROFESSIONAL DEVELOPMENT",
-    "LEADERSHIP",
-    "LEADERSHIP EXPERIENCE",
-    "ACTIVITIES",
-    "EXTRACURRICULAR ACTIVITIES",
-  ]
-
+  // Use a more efficient approach to section extraction
   const sections: Record<string, string> = {}
   let currentSection = "HEADER" // Default section for content before any section header
   let currentContent = ""
+
+  // Prepare a regex pattern for section headers
+  // This is more efficient than checking each header individually
+  const sectionHeaderPattern = new RegExp(`^\\s*(${COMMON_SECTION_HEADERS.join("|")})\\s*(?::|$)`, "i")
 
   // Split the text into lines
   const lines = text.split("\n")
 
   for (const line of lines) {
-    const trimmedLine = line.trim().toUpperCase()
+    const trimmedLine = line.trim()
 
-    // Check if this line is a section header
-    const matchedHeader = sectionHeaders.find(
-      (header) =>
-        trimmedLine === header ||
-        trimmedLine.startsWith(header + ":") ||
-        trimmedLine.startsWith(header + " ") ||
-        // Match headers with common formatting like underlines or all caps
-        (trimmedLine === header && line.match(/^[A-Z\s]+$/)) ||
-        // Match headers that might have formatting characters
-        trimmedLine.replace(/[_\-*]/g, "") === header,
-    )
+    // Check if this line is a section header using the regex pattern
+    const headerMatch = trimmedLine.match(sectionHeaderPattern)
 
-    if (matchedHeader) {
+    if (headerMatch) {
       // Save the previous section
       if (currentContent.trim()) {
         sections[currentSection] = currentContent.trim()
       }
 
       // Start a new section
-      currentSection = matchedHeader
+      currentSection = headerMatch[1].toUpperCase()
       currentContent = ""
     } else {
       // Add this line to the current section

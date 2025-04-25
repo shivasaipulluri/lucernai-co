@@ -9,75 +9,39 @@ import { prisma } from "@/lib/prisma"
 
 /**
  * Cleans the resume output from the AI to ensure it's properly formatted
+ * Optimized for performance with regex caching and more efficient processing
  * @param resumeText The raw resume text from the AI
  * @returns Cleaned and properly formatted resume text
  */
 export function cleanResumeOutput(resumeText: string): string {
   if (!resumeText) return ""
 
-  // First, do a basic cleanup of the entire text to remove any debugging markers
-  const cleaned = resumeText
-    .replace(/\[\s*HEADER\s*\]/gi, "")
-    .replace(/\[\s*MODIFIED(\s+IN\s+ITERATION\s+\d+)?\s*\]/gi, "")
-    .replace(/\[\s*RESUME\s+SECTION\s*\]/gi, "")
-    .replace(/\[\s*SECTION:?\s*[^\]]*\]/gi, "")
-    .replace(/\[\s*ORIGINAL\s*\]/gi, "")
-    .replace(/\[\s*TAILORED\s*\]/gi, "")
-    .replace(/\[\s*UNCHANGED\s*\]/gi, "")
-    .replace(/\[\s*MODIFIED\s*\]/gi, "")
-    .replace(/\[\s*ADDED\s*\]/gi, "")
-    .replace(/\[\s*REMOVED\s*\]/gi, "")
-    .replace(/\[\s*UPDATED\s*\]/gi, "")
-    .replace(/\[\s*ENHANCED\s*\]/gi, "")
-    .replace(/\[\s*IMPROVED\s*\]/gi, "")
-    .replace(/\[\s*OPTIMIZED\s*\]/gi, "")
-    .replace(/\[\s*REFINED\s*\]/gi, "")
-    .replace(/\[\s*REVISED\s*\]/gi, "")
-    .replace(/\[\s*EDITED\s*\]/gi, "")
-    .replace(/\[\s*REWRITTEN\s*\]/gi, "")
-    .replace(/\[\s*REWORDED\s*\]/gi, "")
-    .replace(/\[\s*REFORMATTED\s*\]/gi, "")
-    .replace(/\[\s*RESTRUCTURED\s*\]/gi, "")
-    .replace(/\[\s*REORGANIZED\s*\]/gi, "")
-    .replace(/\[\s*REARRANGED\s*\]/gi, "")
-    .replace(/\[\s*REORDERED\s*\]/gi, "")
-    .replace(/\[\s*REPHRASED\s*\]/gi, "")
-    .replace(/\[\s*REPURPOSED\s*\]/gi, "")
-    .replace(/\[\s*REALIGNED\s*\]/gi, "")
-    .replace(/\[\s*ADJUSTED\s*\]/gi, "")
-    .replace(/\[\s*ALIGNED\s*\]/gi, "")
-    .replace(/\[\s*FORMATTED\s*\]/gi, "")
-    .replace(/\[\s*FORMATTED\s+FOR\s+ATS\s*\]/gi, "")
-    .replace(
-      /This section (was|has been) (modified|tailored|updated|changed|enhanced|improved|optimized|refined|revised|edited|rewritten|reworded|reformatted|restructured|reorganized|rearranged|reordered|rephrased|repurposed|realigned|adjusted|aligned|formatted).*?$/gim,
-      "",
-    )
-    .replace(
-      /I (have|'ve) (modified|tailored|updated|changed|enhanced|improved|optimized|refined|revised|edited|rewritten|reworded|reformatted|restructured|reorganized|rearranged|reordered|rephrased|repurposed|realigned|adjusted|aligned|formatted).*?$/gim,
-      "",
-    )
-    .replace(/Changes made:.*?$/gim, "")
-    .replace(/Modifications:.*?$/gim, "")
-    .replace(/Updates:.*?$/gim, "")
-    .replace(/Enhancements:.*?$/gim, "")
-    .replace(/Improvements:.*?$/gim, "")
-    .replace(/Optimizations:.*?$/gim, "")
-    .replace(/Refinements:.*?$/gim, "")
-    .replace(/Revisions:.*?$/gim, "")
-    .replace(/Edits:.*?$/gim, "")
-    .replace(/Rewrites:.*?$/gim, "")
-    .replace(/Rewording:.*?$/gim, "")
-    .replace(/Reformatting:.*?$/gim, "")
-    .replace(/Restructuring:.*?$/gim, "")
-    .replace(/Reorganizing:.*?$/gim, "")
-    .replace(/Rearranging:.*?$/gim, "")
-    .replace(/Reordering:.*?$/gim, "")
-    .replace(/Rephrasing:.*?$/gim, "")
-    .replace(/Repurposing:.*?$/gim, "")
-    .replace(/Realigning:.*?$/gim, "")
-    .replace(/Adjustments:.*?$/gim, "")
-    .replace(/Alignments:.*?$/gim, "")
-    .replace(/Formatting:.*?$/gim, "")
+  // Cache regex patterns for better performance
+  const REGEX_CACHE = {
+    // Section markers and tags
+    sectionMarkers:
+      /\[\s*(?:HEADER|MODIFIED(?:\s+IN\s+ITERATION\s+\d+)?|RESUME\s+SECTION|SECTION:?\s*[^\]]*|ORIGINAL|TAILORED|UNCHANGED|MODIFIED|ADDED|REMOVED|UPDATED|ENHANCED|IMPROVED|OPTIMIZED|REFINED|REVISED|EDITED|REWRITTEN|REWORDED|REFORMATTED|RESTRUCTURED|REORGANIZED|REARRANGED|REORDERED|REPHRASED|REPURPOSED|REALIGNED|ADJUSTED|ALIGNED|FORMATTED(?:\s+FOR\s+ATS)?)\s*\]/gi,
+
+    // Explanatory text
+    explanatoryText:
+      /(?:This section (?:was|has been)|I (?:have|'ve)) (?:modified|tailored|updated|changed|enhanced|improved|optimized|refined|revised|edited|rewritten|reworded|reformatted|restructured|reorganized|rearranged|reordered|rephrased|repurposed|realigned|adjusted|aligned|formatted).*?$/gim,
+
+    // Change descriptions
+    changeDescriptions:
+      /(?:Changes made|Modifications|Updates|Enhancements|Improvements|Optimizations|Refinements|Revisions|Edits|Rewrites|Rewording|Reformatting|Restructuring|Reorganizing|Rearranging|Reordering|Rephrasing|Repurposing|Realigning|Adjustments|Alignments|Formatting):.*?$/gim,
+
+    // Excessive newlines
+    excessiveNewlines: /\n{3,}/g,
+  }
+
+  // First pass: Remove all section markers and tags in one go
+  let cleaned = resumeText.replace(REGEX_CACHE.sectionMarkers, "")
+
+  // Second pass: Remove explanatory text
+  cleaned = cleaned.replace(REGEX_CACHE.explanatoryText, "")
+
+  // Third pass: Remove change descriptions
+  cleaned = cleaned.replace(REGEX_CACHE.changeDescriptions, "")
 
   // Extract sections, clean each one, and reconstruct
   const sections = extractSections(cleaned)
@@ -189,9 +153,10 @@ export async function saveResumeToDatabase(
 
     return { success: true }
   } catch (error) {
+    const err = error as Error
     return {
       success: false,
-      error: `Failed to save resume: ${error.message}`,
+      error: `Failed to save resume: ${err.message}`,
     }
   }
 }

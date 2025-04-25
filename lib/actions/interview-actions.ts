@@ -116,7 +116,10 @@ export async function generateInterviewQuestions(
     }
   } catch (error) {
     console.error("Error generating interview questions:", error)
-    return { success: false, error: "Failed to generate interview questions" }
+    return {
+      success: false,
+      error: "Failed to generate interview questions",
+    }
   }
 }
 

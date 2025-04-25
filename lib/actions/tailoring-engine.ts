@@ -528,8 +528,17 @@ export async function runTailoringAnalysisWithAnalytics(
       const goldenRulesResult = await checkGoldenRules(tailoredResume, jobDescription)
       debugLog("TAILOR", `Golden rules result: passed=${goldenRulesResult.passed}`)
 
+      debugLog("TAILOR", `Job description being passed to scoring function: ${jobDescription}`)
+
       debugLog("TAILOR", `Calculating scores...`)
-      const scoringResult = await calculateScoresWithGPT(resumeText, tailoredResume, jobDescription)
+      const scoringResult = await calculateScoresWithGPT(
+        resumeText,
+        tailoredResume,
+        jobDescription,
+        { atsWeight: 0.6, jdWeight: 0.4 }, // Example weights
+      )
+
+      debugLog("TAILOR", `Scoring result: ${JSON.stringify(scoringResult)}`)
       debugLog("TAILOR", `Scoring result: ats=${scoringResult.ats_score}, jd=${scoringResult.jd_score}`)
 
       const ats_score = scoringResult.ats_score || 0
@@ -581,9 +590,12 @@ export async function runTailoringAnalysisWithAnalytics(
       })
       debugLog("TAILOR", `Stored tailoring attempt ${attempt} with enhanced logging`)
 
-      // Exit early if golden rules passed
-      if (goldenRulesResult.passed) {
-        debugLog("TAILOR", `Golden rules passed on attempt ${attempt}, stopping further attempts`)
+      // Dynamic iteration control
+      if (goldenRulesResult.passed || totalScore > 170) {
+        debugLog(
+          "TAILOR",
+          `Early termination at attempt ${attempt}: golden_passed=${goldenRulesResult.passed}, score=${totalScore}`,
+        )
         break
       }
     }
