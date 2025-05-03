@@ -16,7 +16,7 @@
     --primary-foreground: 210 40% 98%;
     --secondary: 217 91% 60%; /* Lucerna Sky #3B82F6 */
     --secondary-foreground: 222.2 47.4% 11.2%;
-    --accent: 39 65% 69%; /* Soft Gold #e3c27e */
+    --accent: 43 96% 56%; /* Soft Gold #FBBF24 */
     --accent-foreground: 222.2 47.4% 11.2%;
 
     --muted: 210 40% 96.1%;
@@ -42,7 +42,7 @@
     --secondary-foreground: 210 40% 98%;
     --muted: 217.2 32.6% 17.5%;
     --muted-foreground: 215 20.2% 65.1%;
-    --accent: 39 65% 69%; /* Soft Gold #e3c27e */
+    --accent: 217.2 32.6% 17.5%;
     --accent-foreground: 210 40% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
@@ -125,13 +125,13 @@
   /* Glow animation */
   @keyframes glow {
     0% {
-      box-shadow: 0 0 5px rgba(227, 194, 126, 0.3);
+      box-shadow: 0 0 5px rgba(251, 191, 36, 0.3);
     }
     50% {
-      box-shadow: 0 0 20px rgba(227, 194, 126, 0.7);
+      box-shadow: 0 0 20px rgba(251, 191, 36, 0.7);
     }
     100% {
-      box-shadow: 0 0 5px rgba(227, 194, 126, 0.3);
+      box-shadow: 0 0 5px rgba(251, 191, 36, 0.3);
     }
   }
 
@@ -174,14 +174,14 @@
     box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     --tw-ring-offset-width: 1px;
     --tw-ring-offset-color: #fff;
-    --tw-ring-color: rgba(227, 194, 126, 0.2);
+    --tw-ring-color: rgba(251, 191, 36, 0.2);
     --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
     --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
     box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
   }
 
   .card-hover {
-    @apply transition-all hover:scale-[1.01] hover:shadow-card hover:border-[#e3c27e]/30;
+    @apply transition-all hover:scale-[1.01] hover:shadow-card hover:border-accent/30;
   }
 
   .glow-effect {
@@ -192,7 +192,7 @@
     content: "";
     position: absolute;
     inset: -10px;
-    background: radial-gradient(circle, rgba(227, 194, 126, 0.4) 0%, rgba(227, 194, 126, 0) 70%);
+    background: radial-gradient(circle, rgba(251, 191, 36, 0.4) 0%, rgba(251, 191, 36, 0) 70%);
     opacity: 0;
     transition: opacity 0.3s ease;
     border-radius: inherit;
@@ -210,7 +210,7 @@
 
   .lantern-glow::after {
     content: "";
-    @apply absolute -inset-1 bg-[#e3c27e]/20 blur-md rounded-full opacity-0 transition-opacity;
+    @apply absolute -inset-1 bg-accent/20 blur-md rounded-full opacity-0 transition-opacity;
   }
 
   .lantern-glow:hover::after {
@@ -232,11 +232,11 @@
   }
 
   .lucerna-button {
-    @apply bg-primary text-white hover:bg-[#e3c27e]/90 hover:text-primary rounded-lg px-4 py-2 font-medium transition-all hover:ring-2 ring-[#e3c27e]/30 ring-offset-1;
+    @apply bg-primary text-white hover:bg-accent/90 hover:text-primary rounded-lg px-4 py-2 font-medium transition-all hover:ring-2 ring-accent/30 ring-offset-1;
   }
 
   .lucerna-button-secondary {
-    @apply bg-white text-primary border border-border hover:border-[#e3c27e] rounded-lg px-4 py-2 font-medium transition-all;
+    @apply bg-white text-primary border border-border hover:border-accent rounded-lg px-4 py-2 font-medium transition-all;
   }
 
   .lucerna-section {
@@ -262,17 +262,17 @@
 
   .spark-divider::before {
     content: "";
-    @apply absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 bg-[#e3c27e]/20 rounded-full blur-sm;
+    @apply absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 bg-gold/20 rounded-full blur-sm;
   }
 
   .spark-divider::after {
     content: "";
-    @apply absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-[#e3c27e] rounded-full;
+    @apply absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-gold rounded-full;
   }
 
   /* Glowing text effect */
   .text-glow {
-    text-shadow: 0 0 10px rgba(227, 194, 126, 0.5);
+    text-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
   }
 
   /* Gradient backgrounds */
@@ -281,7 +281,7 @@
   }
 
   .bg-lucerna-glow {
-    @apply bg-gradient-to-br from-[#e3c27e]/10 via-white to-sky/10;
+    @apply bg-gradient-to-br from-gold/10 via-white to-sky/10;
   }
 }
 
@@ -342,7 +342,7 @@
 
 /* Glow effect for buttons */
 .btn-glow {
-  @apply hover:ring-2 ring-[#e3c27e]/30 ring-offset-1 transition-all;
+  @apply hover:ring-2 ring-accent/30 ring-offset-1 transition-all;
   position: relative;
   overflow: hidden;
 }
@@ -354,7 +354,7 @@
   left: -50%;
   width: 200%;
   height: 200%;
-  background: radial-gradient(circle, rgba(227, 194, 126, 0.3) 0%, rgba(227, 194, 126, 0) 70%);
+  background: radial-gradient(circle, rgba(251, 191, 36, 0.3) 0%, rgba(251, 191, 36, 0) 70%);
   opacity: 0;
   transition: opacity 0.3s ease;
 }
@@ -376,7 +376,7 @@
   left: -100%;
   width: 50%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(227, 194, 126, 0.2), transparent);
+  background: linear-gradient(90deg, transparent, rgba(251, 191, 36, 0.2), transparent);
   animation: shimmer 3s infinite linear;
 }
 
