@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server"
 import { prisma } from "@/lib/prisma"
 import { DashboardContent } from "@/components/dashboard/dashboard-content"
 import { redirect } from "next/navigation"
+import { ResumeBuilderCard } from "@/components/dashboard/resume-builder-card"
 
 export const metadata = {
   title: "Tailoring Lab | Lucerna AI",
@@ -58,7 +59,12 @@ export default async function TailoringLabPage({
 
   return (
     <div className="container-wide py-6">
-      <DashboardContent hasResumes={hasResumes} />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <ResumeBuilderCard />
+        <div className="md:col-span-2">
+          <DashboardContent hasResumes={hasResumes} />
+        </div>
+      </div>
     </div>
   )
 }

@@ -6,14 +6,21 @@ import { generateContent } from "./generate-content"
 import { cleanResumeOutput } from "@/lib/utils/resume-utils"
 import { calculateScoresWithGPT } from "./scoring"
 import { checkGoldenRules } from "./golden-rules"
-import { compileTailoringPrompt } from "@/utils/ai/compile-tailoring-prompt"
+import { compileTailoringPrompt, compileLiteTailoringPrompt } from "@/utils/ai/compile-tailoring-prompt"
 import { logTailoringAnalytics } from "@/lib/analytics"
 import { analyzeJobDescription } from "@/lib/intelligence/jd-analyzer"
 import { debugLog, errorLog, previewContent } from "@/lib/utils/debug-utils"
 import { revalidateResumePage, revalidateDashboardPage } from "@/lib/server-utils/revalidate"
-import { diffSections, extractSections, reconstructResumeFromSections } from "@/utils/ai/resume-section-utils"
+import {
+  diffSections,
+  extractSections,
+  reconstructResumeFromSections,
+  cleanSectionContent,
+} from "@/utils/ai/resume-section-utils"
 import { compileRefinementPrompt } from "@/utils/ai/compile-refinement-prompt"
 import { createHash } from "crypto"
+import { updateTailoringProgress } from "./tailoring-progress"
+import type { TailoringMode } from "@/lib/types"
 
 interface TailoringResult {
   success: boolean
@@ -136,6 +143,94 @@ export async function getTailoringProgress(resumeId: string): Promise<TailoringP
   }
 }
 
+// Add a new function for fast initial tailoring
+
+/**
+ * Performs a quick initial tailoring to give users faster feedback
+ * while the more comprehensive tailoring runs in the background
+ */
+export async function quickInitialTailoring(resumeId: string): Promise<SaveResult> {
+  try {
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      return { success: false, error: "Not authenticated" }
+    }
+
+    // Get the resume
+    const resume = await prisma.resume.findUnique({
+      where: {
+        id: resumeId,
+        userId: user.id,
+      },
+    })
+
+    if (!resume) {
+      return { success: false, error: "Resume not found" }
+    }
+
+    // Update progress
+    await updateTailoringProgress(resumeId, user.id, "quick_tailoring", 15)
+
+    // Generate a quick tailored version with a faster model and simplified prompt
+    const quickPrompt = `
+Tailor this resume to match the job description. Focus ONLY on:
+1. Adding relevant keywords from the job description
+2. Adjusting the summary/objective to match the role
+3. Highlighting the most relevant experience
+
+RESUME:
+${resume.resumeText}
+
+JOB DESCRIPTION:
+${resume.jobDescription}
+
+Return ONLY the tailored resume text.`
+
+    const { success, text } = await generateContent(
+      "", // API key from env
+      quickPrompt,
+      "gemini-1.5-flash", // Use the fastest model
+      0.3, // Lower temperature for more predictable results
+    )
+
+    if (!success || !text) {
+      return { success: false, error: "Failed to generate quick tailoring" }
+    }
+
+    // Clean the output
+    const cleanedText = cleanResumeOutput(text)
+
+    // Update the resume with the quick tailored version
+    await prisma.resume.update({
+      where: {
+        id: resumeId,
+        userId: user.id,
+      },
+      data: {
+        modifiedResume: cleanedText,
+        // Remove the quickTailoringComplete field as it doesn't exist in the schema
+      },
+    })
+
+    // Update progress
+    await updateTailoringProgress(resumeId, user.id, "quick_complete", 30)
+
+    // Start the full tailoring process in the background
+    Promise.resolve().then(() => {
+      runTailoringAnalysisWithAnalytics(resumeId, false)
+    })
+
+    return { success: true }
+  } catch (error) {
+    errorLog("QUICK_TAILOR", "Error in quick tailoring:", error)
+    return { success: false, error: "Failed to perform quick tailoring" }
+  }
+}
+
 /**
  * Starts the tailoring analysis for a given resume.
  */
@@ -181,7 +276,7 @@ export async function startTailoringAnalysis(resumeId: string, isRefinement = fa
         status: "started",
         progress: 5,
         currentAttempt: 0,
-        maxAttempts: 3,
+        maxAttempts: 1, // Set to 1 for lite tailoring
       },
       create: {
         resumeId: resumeId,
@@ -189,7 +284,7 @@ export async function startTailoringAnalysis(resumeId: string, isRefinement = fa
         status: "started",
         progress: 5,
         currentAttempt: 0,
-        maxAttempts: 3,
+        maxAttempts: 1, // Set to 1 for lite tailoring
       },
     })
 
@@ -200,7 +295,10 @@ export async function startTailoringAnalysis(resumeId: string, isRefinement = fa
     Promise.resolve().then(async () => {
       try {
         debugLog("START", `Launching background tailoring for resumeId: ${resumeId}`)
-        const result = await runTailoringAnalysisWithAnalytics(resumeId, isRefinement)
+
+        // Use lite tailoring instead of full tailoring
+        const result = await runLiteTailoring(resumeId, user.id)
+
         debugLog("START", `Background tailoring completed with result: ${JSON.stringify(result)}`)
       } catch (error) {
         errorLog("START", `Error in background tailoring for resumeId: ${resumeId}:`, error)
@@ -769,21 +867,11 @@ Please try again or contact support if the problem persists.
       iterations,
       goldenPassed: finalGoldenRulesResult.passed, // Use the final golden rules check result
       modifiedSections: allModifiedSections, // Include modified sections in analytics
+      // Remove isLiteTailoring as it doesn't exist in the interface
     })
     debugLog("TAILOR", `Logged tailoring analytics`)
 
-    // Revalidate paths immediately after completion
-    // try {
-    //   await revalidateResumePage(resumeId)
-    //   await revalidateDashboardPage()
-    //   debugLog("TAILOR", `Revalidated paths for resumeId: ${resumeId}`)
-    // } catch (revalidateError) {
-    //   errorLog("TAILOR", "Error revalidating paths:", revalidateError)
-    //   // Continue even if revalidation fails
-    // }
-    // We'll avoid calling revalidatePath during render
     debugLog("TAILOR", `Completed tailoring for resumeId: ${resumeId}`)
-    // We don't need to call revalidatePath here as the client will refresh the page
 
     return {
       success: true,
@@ -816,44 +904,233 @@ Please try again or contact support if the problem persists.
 }
 
 /**
- * Helper function to update tailoring progress
+ * Runs a lightweight tailoring process for faster results.
+ * This is a simplified version of the full tailoring process.
  */
-async function updateTailoringProgress(
-  resumeId: string,
-  userId: string,
-  status: string,
-  progress: number,
-  currentAttempt?: number,
-): Promise<void> {
+async function runLiteTailoring(resumeId: string, userId: string): Promise<TailoringResult> {
+  // Performance tracking
+  const startTime = Date.now()
+  const perfMetrics: Record<string, number> = {}
+
   try {
-    await prisma.tailoringProgress.upsert({
+    debugLog("LITE_TAILOR", `Starting lite tailoring for resumeId: ${resumeId}`)
+
+    // Check if the resume exists and belongs to the user
+    const resume = await prisma.resume.findUnique({
       where: {
-        resumeId_userId: {
-          resumeId,
-          userId,
-        },
-      },
-      update: {
-        status,
-        progress,
-        ...(currentAttempt !== undefined ? { currentAttempt } : {}),
-        updatedAt: new Date(),
-      },
-      create: {
-        resumeId,
-        userId,
-        status,
-        progress,
-        currentAttempt: currentAttempt || 0,
-        maxAttempts: 3,
+        id: resumeId,
+        userId: userId,
       },
     })
 
-    if (status === "completed") {
-      debugLog("PROGRESS_UPDATE", `Tailoring completed for resumeId: ${resumeId}`)
-      // Client will handle refresh
+    if (!resume) {
+      errorLog("LITE_TAILOR", `Resume not found: ${resumeId}`)
+      return { success: false, error: "Resume not found" }
+    }
+
+    const resumeText = resume.resumeText
+    const jobDescription = resume.jobDescription
+    const tailoringMode = (resume.tailoringMode || "basic") as TailoringMode
+
+    debugLog("LITE_TAILOR", `Resume found: ${resumeId}, tailoringMode: ${tailoringMode}`)
+
+    // Update progress to analyzing
+    await updateTailoringProgress(resumeId, userId, "analyzing", 15)
+
+    // Extract original sections for tracking
+    const originalSections = extractSections(resumeText)
+
+    // Update progress to extracting keywords
+    await updateTailoringProgress(resumeId, userId, "extracting_keywords", 30)
+
+    // Create tailoring prompt based on mode
+    const promptUsed = compileLiteTailoringPrompt({
+      resumeText,
+      jobDescription,
+      mode: tailoringMode,
+    })
+
+    debugLog("LITE_TAILOR", `Compiled lite tailoring prompt, length: ${promptUsed.length} chars`)
+
+    // Update progress to tailoring
+    await updateTailoringProgress(resumeId, userId, "tailoring", 45)
+
+    // Generate tailored resume with Gemini API
+    let tailoredResume = ""
+    let retryCount = 0
+    const maxRetries = 2
+
+    while (retryCount <= maxRetries) {
+      try {
+        const { success, text } = await generateContent(
+          "", // API key from env
+          promptUsed,
+          "gemini-1.5-flash",
+          tailoringMode === "aggressive" ? 0.7 : tailoringMode === "personalized" ? 0.5 : 0.3,
+        )
+
+        if (success && text && text.length > 100) {
+          tailoredResume = text
+          break
+        } else {
+          throw new Error("Failed to generate valid content")
+        }
+      } catch (error) {
+        retryCount++
+        if (retryCount > maxRetries) {
+          errorLog("LITE_TAILOR", `Failed to generate content after ${maxRetries} retries`)
+          throw error
+        }
+        debugLog("LITE_TAILOR", `Retry ${retryCount} for content generation`)
+        // Wait before retrying
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+    }
+
+    debugLog("LITE_TAILOR", `Generated tailored resume, length: ${tailoredResume.length} chars`)
+
+    // Clean the tailored resume
+    const cleanedResume = cleanResumeOutput(tailoredResume)
+
+    // Update progress to scoring
+    await updateTailoringProgress(resumeId, userId, "scoring", 70)
+
+    // Score the tailored resume
+    const scoringResult = await calculateScoresWithGPT(resumeText, cleanedResume, jobDescription, {
+      atsWeight: 0.6,
+      jdWeight: 0.4,
+    })
+
+    if (!scoringResult.ats_score || !scoringResult.jd_score) {
+      throw new Error("Failed to score resume")
+    }
+
+    debugLog("LITE_TAILOR", `Scoring result: ats=${scoringResult.ats_score}, jd=${scoringResult.jd_score}`)
+
+    // Check golden rules
+    const goldenRulesResult = await checkGoldenRules(cleanedResume, jobDescription)
+
+    // Identify modified sections
+    const modifiedSections = identifyModifiedSections(resumeText, cleanedResume)
+
+    // Update the resume with the tailored content and scores
+    await prisma.resume.update({
+      where: {
+        id: resumeId,
+        userId: userId,
+      },
+      data: {
+        modifiedResume: cleanedResume,
+        atsScore: scoringResult.ats_score,
+        jdScore: scoringResult.jd_score,
+        goldenPassed: goldenRulesResult.passed,
+        finalModifiedSections: JSON.stringify(modifiedSections),
+        tailoringMode: tailoringMode,
+      },
+    })
+
+    // Create a tailoring attempt record
+    await prisma.tailoringAttempt.create({
+      data: {
+        userId: userId,
+        resumeId: resumeId,
+        attemptNumber: 1,
+        atsScore: scoringResult.ats_score,
+        jdScore: scoringResult.jd_score,
+        goldenPassed: goldenRulesResult.passed,
+        feedback: goldenRulesResult.feedback.join("\n"),
+        suggestions: goldenRulesResult.suggestions.join("\n"),
+        atsFeedback: scoringResult.ats_feedback || "",
+        jdFeedback: scoringResult.jd_feedback || "",
+        modifiedSectionsSent: "[]",
+        modifiedSectionsReceived: JSON.stringify(modifiedSections),
+      },
+    })
+
+    // Update progress to completed
+    await updateTailoringProgress(resumeId, userId, "completed", 100)
+
+    // Log analytics
+    await logTailoringAnalytics({
+      userId: userId,
+      resumeId,
+      originalText: resumeText,
+      tailoredText: cleanedResume,
+      jobDescription,
+      atsScore: scoringResult.ats_score,
+      jdScore: scoringResult.jd_score,
+      tailoringMode,
+      isRefinement: false,
+      iterations: 1,
+      goldenPassed: goldenRulesResult.passed,
+      modifiedSections,
+      // Remove isLiteTailoring as it doesn't exist in the interface
+    })
+
+    // Revalidate pages
+    try {
+      await revalidateResumePage(resumeId)
+      await revalidateDashboardPage()
+    } catch (error) {
+      errorLog("LITE_TAILOR", "Error revalidating pages:", error)
+    }
+
+    return {
+      success: true,
+      data: {
+        version: 1,
+        ats_score: scoringResult.ats_score,
+        jd_score: scoringResult.jd_score,
+      },
     }
   } catch (error) {
-    errorLog("PROGRESS_UPDATE", "Error updating tailoring progress:", error)
+    errorLog("LITE_TAILOR", "Error in runLiteTailoring:", error)
+
+    // Update progress to error
+    try {
+      await updateTailoringProgress(resumeId, userId, "error", 0)
+    } catch (progressError) {
+      errorLog("LITE_TAILOR", "Error updating progress to error state:", progressError)
+    }
+
+    return { success: false, error: "Failed to tailor resume" }
+  } finally {
+    perfMetrics.totalTime = Date.now() - startTime
+    debugLog("LITE_TAILOR", `Lite tailoring completed in ${perfMetrics.totalTime}ms`)
   }
+}
+
+/**
+ * Helper function to identify which sections were modified in the tailored resume.
+ */
+function identifyModifiedSections(originalText: string, tailoredText: string): string[] {
+  const originalSections = extractSections(originalText)
+  const tailoredSections = extractSections(tailoredText)
+
+  const modifiedSections: string[] = []
+
+  // Check each section in the tailored resume
+  Object.entries(tailoredSections).forEach(([sectionName, content]) => {
+    const originalContent = originalSections[sectionName]
+
+    // If section exists in both and content is different, it was modified
+    if (originalContent) {
+      const cleanedOriginal = cleanSectionContent(originalContent)
+      const cleanedTailored = cleanSectionContent(content)
+
+      // Simple comparison - if content length or words changed significantly
+      if (
+        Math.abs(cleanedOriginal.length - cleanedTailored.length) > 20 ||
+        Math.abs(cleanedOriginal.split(/\s+/).length - cleanedTailored.split(/\s+/).length) > 5
+      ) {
+        modifiedSections.push(sectionName)
+      }
+    }
+    // If section only exists in tailored resume, it's new
+    else {
+      modifiedSections.push(sectionName)
+    }
+  })
+
+  return modifiedSections
 }

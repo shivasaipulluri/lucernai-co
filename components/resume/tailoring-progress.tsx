@@ -1,172 +1,154 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Progress } from "@/components/ui/progress"
-import { Sparkles, CheckCircle, AlertTriangle, Loader2 } from "lucide-react"
+import { LucernaSunIcon } from "@/components/lucerna-sun-icon"
+import { Sparkles, CheckCircle, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
+import confetti from "canvas-confetti"
 
 interface TailoringProgressProps {
   progress: number
   currentAttempt?: number
   maxAttempts?: number
   status: string
+  mode?: "basic" | "personalized" | "aggressive"
 }
 
-export function TailoringProgress({ progress, currentAttempt = 1, maxAttempts = 3, status }: TailoringProgressProps) {
-  const [animatedProgress, setAnimatedProgress] = useState(0)
-  const [showSparkle, setShowSparkle] = useState(false)
-  const [sparklePosition, setSparklePosition] = useState({ left: "10%", opacity: 1 })
+export function TailoringProgress({
+  progress,
+  currentAttempt,
+  maxAttempts,
+  status,
+  mode = "basic",
+}: TailoringProgressProps) {
+  const [sparkleVisible, setSparkleVisible] = useState(false)
 
-  // Smooth progress animation
+  // Trigger confetti when completed
   useEffect(() => {
-    // Always animate smoothly to the target progress
-    const animationDuration = 1000 // 1 second animation
-    const startTime = Date.now()
-    const startValue = animatedProgress
-    const endValue = progress
-
-    const animateProgress = () => {
-      const elapsed = Date.now() - startTime
-      const progress = Math.min(elapsed / animationDuration, 1)
-      // Use easeOutQuad for smoother deceleration
-      const eased = 1 - (1 - progress) * (1 - progress)
-      const newValue = startValue + (endValue - startValue) * eased
-
-      setAnimatedProgress(newValue)
-
-      if (progress < 1) {
-        requestAnimationFrame(animateProgress)
-      }
-    }
-
-    requestAnimationFrame(animateProgress)
-  }, [progress])
-
-  // Sparkle animation effect
-  useEffect(() => {
-    // Show sparkle at certain progress milestones or when changing iterations
-    const shouldShowSparkle =
-      (animatedProgress > 25 && animatedProgress < 28) ||
-      (animatedProgress > 50 && animatedProgress < 53) ||
-      (animatedProgress > 75 && animatedProgress < 78) ||
-      (currentAttempt > 1 && animatedProgress % 20 < 3)
-
-    if (shouldShowSparkle && !showSparkle) {
-      setShowSparkle(true)
-      // Calculate position based on progress
-      const newPosition = `${Math.min(animatedProgress, 95)}%`
-      setSparklePosition({ left: newPosition, opacity: 1 })
-
-      // Hide sparkle after animation
+    if (status === "completed" && progress === 100) {
+      // Small delay to ensure the UI has updated
       const timer = setTimeout(() => {
-        setSparklePosition((prev) => ({ ...prev, opacity: 0 }))
-        setTimeout(() => setShowSparkle(false), 500)
-      }, 1500)
-
+        confetti({
+          particleCount: 100,
+          spread: 70,
+          origin: { y: 0.6 },
+        })
+      }, 500)
       return () => clearTimeout(timer)
     }
-  }, [animatedProgress, currentAttempt, showSparkle])
+  }, [status, progress])
 
-  // Determine status display
-  const getStatusDisplay = () => {
+  // Animate sparkles
+  useEffect(() => {
+    if (progress > 0 && progress < 100) {
+      const interval = setInterval(() => {
+        setSparkleVisible((prev) => !prev)
+      }, 1000)
+      return () => clearInterval(interval)
+    }
+  }, [progress])
+
+  // Get status message based on current status
+  const getStatusMessage = () => {
     switch (status) {
       case "not_started":
-        return "Preparing..."
+        return "Preparing to tailor your resume..."
       case "started":
-        return "Tailoring in progress..."
+        return "Starting the tailoring process..."
       case "analyzing":
-        return "Analyzing resume structure..."
-      case "extracting":
-        return "Extracting key qualifications..."
-      case "matching":
-        return "Matching to job requirements..."
-      case "optimizing":
-        return "Optimizing content..."
-      case "formatting":
-        return "Perfecting format and style..."
-      case "refining":
-        return "Refining language and tone..."
-      case "finalizing":
-        return "Finalizing your resume..."
+        return "Analyzing your resume and job description..."
+      case "extracting_keywords":
+        return "Extracting key requirements from job description..."
+      case "tailoring":
+        return mode === "basic"
+          ? "Optimizing resume with key terms..."
+          : mode === "personalized"
+            ? "Creating personalized content for your resume..."
+            : "Aggressively optimizing your resume for maximum impact..."
+      case "scoring":
+        return "Calculating ATS and job match scores..."
       case "completed":
-        return "Tailoring complete!"
+        return "Tailoring complete! Your resume is ready."
+      case "error":
+        return "We encountered an issue. Please try again."
       case "loading_resume":
         return "Loading your tailored resume..."
-      case "error":
-        return "Error tailoring resume"
       default:
-        return "Processing..."
+        if (status.startsWith("attempt_") && currentAttempt && maxAttempts) {
+          return `Tailoring attempt ${currentAttempt} of ${maxAttempts}...`
+        }
+        return "Processing your resume..."
     }
   }
 
-  // Get a more detailed message based on progress
-  const getDetailedMessage = () => {
-    if (status === "error") return "We encountered an issue. Please try again."
-    if (status === "loading_resume") return "Almost there! Your resume is ready to view."
+  // Get estimated time remaining
+  const getTimeEstimate = () => {
+    if (status === "completed" || status === "error") return null
 
-    // For iteration transitions, show special messages
-    if (currentAttempt > 1) {
-      if (animatedProgress < 30) return "Applying insights from previous iteration..."
-      if (animatedProgress < 60) return "Enhancing resume quality based on AI feedback..."
+    if (progress < 30) {
+      return "Estimated time: ~20 seconds"
+    } else if (progress < 60) {
+      return "Estimated time: ~10 seconds"
+    } else if (progress < 90) {
+      return "Almost done! Just a few more seconds..."
     }
-
-    // Progress-based messages
-    if (animatedProgress < 20) return "Analyzing your experience and skills..."
-    if (animatedProgress < 40) return "Identifying key achievements to highlight..."
-    if (animatedProgress < 60) return "Aligning your qualifications with job requirements..."
-    if (animatedProgress < 80) return "Optimizing language for maximum impact..."
-    return "Putting final touches on your tailored resume..."
+    return null
   }
 
   return (
-    <div className="w-full max-w-md">
-      <div className="relative mb-2">
+    <div className="w-full max-w-md mx-auto">
+      <div className="flex items-center justify-center mb-4">
+        {status === "completed" ? (
+          <CheckCircle className="h-8 w-8 text-green-500 animate-in fade-in duration-500" />
+        ) : status === "error" ? (
+          <AlertTriangle className="h-8 w-8 text-amber-500 animate-in fade-in duration-500" />
+        ) : (
+          <div className="relative">
+            <LucernaSunIcon size={32} glowing={true} className="animate-pulse" />
+            <Sparkles
+              className={cn(
+                "absolute -top-1 -right-1 h-4 w-4 text-amber-400 transition-opacity duration-500",
+                sparkleVisible ? "opacity-100" : "opacity-0",
+              )}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="mb-2 text-center font-medium">{getStatusMessage()}</div>
+
+      <div className="relative mb-1">
         <Progress
-          value={animatedProgress}
+          value={progress}
           className={cn(
-            "h-3 bg-gray-100 transition-all duration-500",
-            status === "completed" || status === "loading_resume" ? "bg-green-100" : "bg-blue-50",
+            "h-2 transition-all duration-500",
+            status === "completed" ? "bg-green-100" : status === "error" ? "bg-red-100" : "bg-amber-50",
           )}
         />
-
-        {/* Animated sparkle effect */}
-        {showSparkle && (
+        {progress > 0 && progress < 100 && status !== "error" && (
           <div
-            className="absolute top-0 transform -translate-y-1/2 transition-all duration-500 z-10"
+            className="absolute top-0 h-2 w-8 bg-gradient-to-r from-transparent via-amber-300 to-transparent animate-shimmer"
             style={{
-              left: sparklePosition.left,
-              opacity: sparklePosition.opacity,
-              transition: "left 0.5s ease-out, opacity 0.5s ease-in-out",
+              left: `${Math.min(Math.max(progress - 8, 0), 92)}%`,
+              opacity: 0.7,
             }}
-          >
-            <Sparkles className="h-6 w-6 text-amber-400 animate-pulse" />
-          </div>
+          />
         )}
       </div>
 
-      <div className="flex justify-between items-center mb-4">
-        <div className="text-sm text-gray-500">{animatedProgress.toFixed(0)}% complete</div>
-
-        {maxAttempts > 1 && (
-          <div className="text-sm text-gray-500">
-            Iteration {currentAttempt} of {maxAttempts}
-          </div>
-        )}
+      <div className="flex justify-between text-xs text-gray-500">
+        <div>{progress}% complete</div>
+        <div>
+          {status === "completed" ? (
+            <span className="text-green-600 font-medium">Done!</span>
+          ) : status === "error" ? (
+            <span className="text-red-600 font-medium">Failed</span>
+          ) : (
+            getTimeEstimate()
+          )}
+        </div>
       </div>
-
-      <div className="flex items-center gap-2 mb-1">
-        {status === "error" ? (
-          <AlertTriangle className="h-4 w-4 text-red-500" />
-        ) : status === "completed" ? (
-          <CheckCircle className="h-4 w-4 text-green-500" />
-        ) : (
-          <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
-        )}
-
-        <div className="font-medium">{getStatusDisplay()}</div>
-      </div>
-
-      <p className="text-sm text-gray-600">{getDetailedMessage()}</p>
     </div>
   )
 }

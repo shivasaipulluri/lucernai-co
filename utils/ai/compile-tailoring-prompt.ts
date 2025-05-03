@@ -8,6 +8,23 @@
  * - Version information
  */
 
+// Optimize the prompt compilation to be more efficient
+
+// Add a prompt cache at the top of the file
+import { createHash } from "crypto"
+
+const promptCache = new Map<string, string>()
+const MAX_PROMPT_CACHE_SIZE = 50
+
+// Add a function to generate a cache key
+function generatePromptCacheKey(params: CompileTailoringPromptParams): string {
+  const { resumeText, jobDescription, mode, version } = params
+  // Create a hash of the key inputs
+  return `${mode || "personalized"}:${version || 1}:${createHash("sha256")
+    .update((resumeText || "").substring(0, 500) + (jobDescription || "").substring(0, 500))
+    .digest("hex")}`
+}
+
 // Define the tailoring modes and their configurations
 export type TailoringMode = "basic" | "personalized" | "aggressive"
 
@@ -114,18 +131,32 @@ export function compileTailoringPrompt({
   previousFeedback = [],
   version = 1,
 }: CompileTailoringPromptParams): string {
+  // For refinements with feedback, skip cache
+  if (previousFeedback.length === 0) {
+    const cacheKey = generatePromptCacheKey({
+      resumeText: resumeText || "",
+      jobDescription: jobDescription || "",
+      mode: mode || "personalized",
+      jdIntelligence,
+      previousFeedback,
+      version: version || 1,
+    })
+
+    // Check cache
+    if (promptCache.has(cacheKey)) {
+      return promptCache.get(cacheKey)!
+    }
+  }
+
   // Get the configuration for the selected mode
   const modeConfig = TAILORING_MODES[mode]
 
-  // Build the prompt header - more concise but still effective
-  let prompt = `You are an expert resume tailor with years of experience helping candidates optimize their resumes for specific job opportunities.
+  // Build a more concise prompt
+  let prompt = `You are an expert resume tailor.
 
-TASK:
-Rewrite the following resume to better match the provided job description.
-
-TAILORING MODE: ${modeConfig.name} (${modeConfig.description})
-
-TAILORING INSTRUCTIONS:
+TASK: Rewrite the resume to match the job description.
+MODE: ${modeConfig.name} (${modeConfig.description})
+INSTRUCTIONS:
 ${modeConfig.instructions}
 `
 
@@ -134,77 +165,74 @@ ${modeConfig.instructions}
     prompt += `
 JOB INTELLIGENCE:
 Role: ${jdIntelligence.role}
-Seniority: ${jdIntelligence.seniority}
-Key Keywords: ${jdIntelligence.keywords.join(", ")}
-Key Responsibilities: 
-${jdIntelligence.responsibilities
-  .slice(0, 5)
-  .map((r: string) => `- ${r}`)
-  .join("\n")}
-Key Qualifications: 
-${jdIntelligence.qualifications
-  .slice(0, 5)
-  .map((q: string) => `- ${q}`)
-  .join("\n")}
-
-Use this intelligence to guide your tailoring approach.
+Keywords: ${jdIntelligence.keywords.slice(0, 5).join(", ")}
+Key Responsibilities: ${jdIntelligence.responsibilities
+      .slice(0, 3)
+      .map((r: string) => r)
+      .join("; ")}
+Key Qualifications: ${jdIntelligence.qualifications
+      .slice(0, 3)
+      .map((q: string) => q)
+      .join("; ")}
 `
   }
 
   // Add version-specific guidance
   if (version > 1) {
-    prompt += `
-VERSION CONTEXT:
-This is version ${version} of the resume. Focus on refining and improving the previous version.
+    prompt += `VERSION: ${version} - Focus on refining previous version.
 `
   }
 
   // Add previous feedback if available - more focused
   if (previousFeedback && previousFeedback.length > 0) {
     prompt += `
-PREVIOUS FEEDBACK TO ADDRESS:
+FEEDBACK TO ADDRESS:
 ${previousFeedback
-  .slice(0, 5)
+  .slice(0, 3)
   .map((feedback) => `• ${feedback}`)
   .join("\n")}
-
-Please incorporate this feedback in your tailoring approach.
 `
   }
 
-  // Add output format instructions - streamlined but comprehensive
+  // Add output format instructions - streamlined
   prompt += `
-OUTPUT FORMAT REQUIREMENTS:
-• Return ONLY the tailored resume text without any explanations or commentary
-• Do NOT include any section labels, debugging markers, or explanatory text
-• Preserve the same section order, spacing, and formatting as the original resume
-• Maintain consistent bullet point styles and indentation throughout
-• Keep the same heading format and capitalization as the original resume
-• Ensure proper spacing between sections (typically one blank line)
-• Do not duplicate any sections or content
+OUTPUT FORMAT:
+• Return ONLY the tailored resume text
+• Preserve section order and formatting
+• No explanations or commentary
 `
-
-  // Add any additional mode-specific guidance
-  if (modeConfig.additionalGuidance) {
-    prompt += `
-ADDITIONAL GUIDANCE:
-${modeConfig.additionalGuidance}
-`
-  }
 
   // Add the resume and job description
   prompt += `
 RESUME:
-${resumeText}
+${resumeText || ""}
 
 JOB DESCRIPTION:
-${jobDescription}
+${jobDescription || ""}
 `
 
-  // Add final instruction to ensure proper output
-  prompt += `
-Remember to return ONLY the tailored resume text without any explanations, introductions, or commentary.
-`
+  // Cache the prompt if not a refinement with feedback
+  if (previousFeedback.length === 0) {
+    const cacheKey = generatePromptCacheKey({
+      resumeText: resumeText || "",
+      jobDescription: jobDescription || "",
+      mode: mode || "personalized",
+      jdIntelligence,
+      previousFeedback,
+      version: version || 1,
+    })
+
+    // Manage cache size
+    if (promptCache.size >= MAX_PROMPT_CACHE_SIZE) {
+      // Remove oldest entry
+      const firstKey = promptCache.keys().next().value
+      if (firstKey !== undefined) {
+        promptCache.delete(firstKey)
+      }
+    }
+
+    promptCache.set(cacheKey, prompt)
+  }
 
   return prompt
 }
@@ -230,4 +258,97 @@ export function extractFeedbackPoints(feedbackString: string): string[] {
  */
 export function getTemperatureForMode(mode: TailoringMode): number {
   return TAILORING_MODES[mode]?.temperature || 0.5
+}
+
+/**
+ * Compiles a prompt for the Lite Tailoring system based on the specified mode
+ * This is a simplified version of the full tailoring prompt for faster processing
+ */
+export function compileLiteTailoringPrompt({
+  resumeText,
+  jobDescription,
+  mode = "personalized",
+}: {
+  resumeText: string
+  jobDescription: string
+  mode?: TailoringMode
+}): string {
+  // Common instructions for all modes
+  const commonInstructions = `
+You are an expert resume tailoring AI assistant. Your task is to tailor the provided resume to better match the job description.
+
+RESUME:
+${resumeText || ""}
+
+JOB DESCRIPTION:
+${jobDescription || ""}
+
+IMPORTANT GUIDELINES:
+- Maintain the original resume structure and formatting
+- Do not add fictional experiences or qualifications
+- Ensure the tailored resume is ATS-friendly
+- Focus on highlighting relevant skills and experiences
+- Return the complete tailored resume text
+- Do not include explanations or comments in your response
+`.trim()
+
+  // Mode-specific instructions
+  let modeInstructions = ""
+
+  switch (mode) {
+    case "basic":
+      modeInstructions = `
+TAILORING INSTRUCTIONS (BASIC MODE):
+1. Extract the top 10 most important keywords from the job description
+2. Naturally incorporate these keywords into the resume where relevant
+3. Edit 6-7 sentences to better align with the job requirements
+4. Make minimal changes to preserve the original content
+5. Focus on optimizing the Summary/Profile section and bullet points in Experience
+6. Ensure all changes maintain the candidate's authentic experience
+`.trim()
+      break
+
+    case "personalized":
+      modeInstructions = `
+TAILORING INSTRUCTIONS (PERSONALIZED MODE):
+1. Extract the top 15 most important keywords from the job description
+2. Naturally incorporate these keywords throughout the resume
+3. Find or create a "Projects" or "Academic Projects" section
+4. Add ONE new project entry related to the job requirements using the candidate's existing skills
+5. The project should be realistic based on the candidate's background
+6. Enhance 8-10 bullet points across the resume to better match the job
+7. Improve the Summary/Profile section to highlight relevant qualifications
+8. Ensure all changes maintain the candidate's authentic experience
+`.trim()
+      break
+
+    case "aggressive":
+      modeInstructions = `
+TAILORING INSTRUCTIONS (AGGRESSIVE MODE):
+1. Extract the top 20 most important keywords and phrases from the job description
+2. Strategically place these keywords throughout the resume for maximum impact
+3. Rewrite the Summary/Profile section to strongly align with the job
+4. Restructure bullet points in the Experience section to emphasize relevant achievements
+5. Reorganize Skills section to prioritize job-relevant skills
+6. Rewrite 40-50% of the resume content to better match the job requirements
+7. Add relevant industry-specific terminology where appropriate
+8. Ensure all changes maintain the candidate's authentic experience and qualifications
+`.trim()
+      break
+  }
+
+  // Final output instructions
+  const outputInstructions = `
+OUTPUT INSTRUCTIONS:
+- Return ONLY the complete tailored resume text
+- Do not include explanations, comments, or markdown formatting
+- Maintain proper spacing and formatting for ATS compatibility
+`.trim()
+
+  // Combine all instructions
+  return `${commonInstructions}
+
+${modeInstructions}
+
+${outputInstructions}`
 }

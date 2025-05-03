@@ -72,7 +72,7 @@ export async function logAnalyticsEvent(eventType: string, metadata: Record<stri
   }
 }
 
-interface LogTailoringAnalyticsParams {
+export interface LogTailoringAnalyticsParams {
   userId: string
   resumeId: string
   originalText: string
@@ -84,7 +84,8 @@ interface LogTailoringAnalyticsParams {
   isRefinement: boolean
   iterations: number
   goldenPassed: boolean
-  modifiedSections?: string[]
+  modifiedSections: string[]
+  isLiteTailoring?: boolean // Add this optional parameter
 }
 
 export async function logTailoringAnalytics(params: LogTailoringAnalyticsParams): Promise<boolean> {

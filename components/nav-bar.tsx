@@ -4,7 +4,7 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { usePathname, useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
-import { Menu, User, FileText, Clock, RotateCw } from "lucide-react"
+import { Menu, User, FileText, Clock, RotateCw, FileEdit } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -84,6 +84,13 @@ export function NavBar() {
                       Tailoring Lab
                     </Link>
                   </DropdownMenuItem>
+                  {/*<DropdownMenuItem asChild>
+                    <Link href="/resume/builder">
+                      <FileEdit className="mr-2 h-4 w-4" />
+                      Resume Builder
+                    </Link>
+                  </DropdownMenuItem>
+                  */}
                   <DropdownMenuItem asChild>
                     <Link href="/saved-resumes">
                       <Clock className="mr-2 h-4 w-4" />
@@ -160,6 +167,13 @@ export function NavBar() {
                   <DropdownMenuItem asChild>
                     <Link href="/dashboard">Dashboard</Link>
                   </DropdownMenuItem>
+                  {
+                    /*
+                  <DropdownMenuItem asChild>
+                    <Link href="/resume/builder">Resume Builder</Link>
+                  </DropdownMenuItem>
+                    */
+                  }
                   <DropdownMenuItem asChild>
                     <Link href="/interview">Interview</Link>
                   </DropdownMenuItem>

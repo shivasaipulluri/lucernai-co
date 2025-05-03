@@ -10,8 +10,7 @@ import { RefreshCw, Edit, Save, AlertTriangle, CheckCircle, History, RotateCw, L
 import type { Resume, TailoringProgress } from "@/lib/types"
 import { ResumeView } from "./resume-view"
 import { TailoringProgress as TailoringProgressIndicator } from "./tailoring-progress"
-import { saveResumeToCollection, startTailoringAnalysis } from "@/lib/actions/tailoring-engine"
-import { getTailoringProgress } from "@/lib/actions/tailoring-engine"
+import { saveResumeToCollection, startTailoringAnalysis, getTailoringProgress } from "@/lib/actions/tailoring-engine"
 import { refineResume } from "@/lib/actions/refine-resume"
 import { LucernaSunIcon } from "@/components/lucerna-sun-icon"
 import { cn } from "@/lib/utils"
@@ -442,6 +441,7 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
                     currentAttempt={progress.currentAttempt}
                     maxAttempts={progress.maxAttempts}
                     status={isRefreshingAfterCompletion ? "loading_resume" : progress.status}
+                    mode={resume?.tailoringMode as any}
                   />
 
                   <div className="mt-8 text-sm text-gray-500 max-w-md">

@@ -38,6 +38,7 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
   const completedRef = useRef(false)
   const { toast } = useToast()
   const router = useRouter()
+  const [isRefreshingAfterCompletion, setIsRefreshingAfterCompletion] = useState(false)
 
   // Add debug logging
   const logDebug = useCallback((message: string) => {
@@ -97,6 +98,7 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
   useEffect(() => {
     if (progress.status === "completed" && !completedRef.current) {
       completedRef.current = true
+      setIsRefreshingAfterCompletion(true) // Set loading state during refresh
       logDebug("Tailoring completed, refreshing page...")
 
       // Clear interval
@@ -117,6 +119,10 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
       setTimeout(() => {
         logDebug("Performing final refresh after completion")
         router.refresh()
+        // Reset the refresh loading state after a delay to ensure data is loaded
+        setTimeout(() => {
+          setIsRefreshingAfterCompletion(false)
+        }, 1000)
       }, 3000)
     }
   }, [progress.status, router, logDebug])
@@ -409,7 +415,6 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
         )}
       </div>
 
-
       {showVersionHistory && versionHistory.length > 0 && (
         <div className="mb-8">
           <VersionHistory versions={versionHistory} currentVersionId={resumeId} />
@@ -418,27 +423,32 @@ export function ResumeLabClient({ resume, resumeId, initialProgress, versionHist
 
       <div className="grid md:grid-cols-3 gap-6">
         <div className="md:col-span-2">
-          {isLoading ? (
+          {isLoading || isRefreshingAfterCompletion ? (
             <Card className="overflow-hidden">
               <CardContent className="p-8">
                 <div className="flex flex-col items-center justify-center text-center">
                   <LucernaSunIcon size={48} glowing={true} className="mb-6 animate-pulse" />
-                  <h2 className="text-2xl font-semibold mb-4 font-serif">Tailoring Your Resume</h2>
+                  <h2 className="text-2xl font-semibold mb-4 font-serif">
+                    {isRefreshingAfterCompletion ? "Loading Your Resume..." : "Tailoring Your Resume"}
+                  </h2>
                   <p className="text-gray-600 mb-8 max-w-md">
-                    Lucerna AI is analyzing your resume and the job description to create a perfectly tailored version.
+                    {isRefreshingAfterCompletion
+                      ? "Your tailored resume is ready and loading..."
+                      : "Lucerna AI is analyzing your resume and the job description to create a perfectly tailored version."}
                   </p>
 
                   <TailoringProgressIndicator
-                    progress={progress.progress}
+                    progress={isRefreshingAfterCompletion ? 100 : progress.progress}
                     currentAttempt={progress.currentAttempt}
                     maxAttempts={progress.maxAttempts}
-                    status={progress.status}
+                    status={isRefreshingAfterCompletion ? "loading_resume" : progress.status}
                   />
 
                   <div className="mt-8 text-sm text-gray-500 max-w-md">
                     <p>
-                      Our AI is making multiple passes to ensure the highest quality result. This typically takes 30-60
-                      seconds.
+                      {isRefreshingAfterCompletion
+                        ? "Almost there! Loading your tailored resume..."
+                        : "Our AI is making multiple passes to ensure the highest quality result. This typically takes 30-60 seconds."}
                     </p>
                   </div>
                 </div>

@@ -3,7 +3,6 @@ import type { TailoringMode } from "@/utils/ai/compile-tailoring-prompt"
 import type { InterviewType, InterviewQuestion, InterviewAnswer } from "@/lib/actions/interview-actions"
 
 export interface Resume {
-  jobTitle: String | null
   id: string
   userId: string
   resumeText: string
@@ -28,6 +27,7 @@ export interface Resume {
   atsWarnings?: string | null // JSON string of ATS warnings
   sectionRationales?: ResumeSectionRationale[]
   feedback?: ResumeFeedback[]
+  isLiteTailored?: boolean // Flag to indicate if this resume was processed with Lite Tailoring
 }
 
 export interface CoverLetter {
@@ -261,4 +261,18 @@ export interface AnalyticsData {
   goldenRuleStats: GoldenRuleStats
   topPerformingResumes: TopPerformingResume[]
   hasData: boolean
+}
+
+export interface ResumeMetadata {
+  id: string
+  userId: string
+  resumeId: string
+  contentSnippet: string
+  tailoringMode: string
+  iterations: number
+  passedRules: boolean
+  atsScore: number
+  jdScore: number
+  createdAt: string
+  isLiteTailoring?: boolean // Flag to indicate if this metadata is from Lite Tailoring
 }
